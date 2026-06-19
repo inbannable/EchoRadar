@@ -1,0 +1,8 @@
+add_subdirectory(audio)
+add_subdirectory(dsp)
+add_subdirectory(events)
+add_subdirectory(features)
+add_subdirectory(localization)
+add_subdirectory(tracking)
+add_subdirectory(overlay)
+add_subdirectory(app)

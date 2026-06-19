@@ -1,0 +1,39 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# CMake cache & generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# Compiled objects
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Datasets (may be large)
+datasets/*.wav
+datasets/*.bin
+
+# Model files
+model.bin
+
+# macOS
+.DS_Store

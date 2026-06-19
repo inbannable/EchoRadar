@@ -1,0 +1,20 @@
+add_executable(echoradar_tests
+    test_ring_buffer.cpp
+    test_stft.cpp
+    test_detectors.cpp
+    test_features.cpp
+    test_localization.cpp
+    test_tracking.cpp
+)
+target_link_libraries(echoradar_tests
+    PRIVATE
+        echoradar_audio
+        echoradar_dsp
+        echoradar_events
+        echoradar_features
+        echoradar_localization
+        echoradar_tracking
+        GTest::gtest_main
+)
+include(GoogleTest)
+gtest_discover_tests(echoradar_tests)
