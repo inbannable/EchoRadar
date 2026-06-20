@@ -1,5 +1,6 @@
 add_executable(echoradar_tests
     test_ring_buffer.cpp
+    test_audio_ring_buffer.cpp
     test_stft.cpp
     test_detectors.cpp
     test_features.cpp

@@ -7,10 +7,18 @@ namespace EchoRadar {
 // ── Audio ──────────────────────────────────────────────────────────────────────
 
 struct AudioFrame {
-    std::vector<float> left;
-    std::vector<float> right;
+    std::vector<float> left;          ///< Left-channel PCM samples
+    std::vector<float> right;         ///< Right-channel PCM samples
     uint64_t           timestamp_ms{0};
     uint32_t           sample_rate{48000};
+};
+
+/// Per-channel RMS and peak levels, updated each capture callback block.
+struct AudioLevels {
+    float leftRms{0.f};
+    float rightRms{0.f};
+    float leftPeak{0.f};
+    float rightPeak{0.f};
 };
 
 // ── DSP ───────────────────────────────────────────────────────────────────────
