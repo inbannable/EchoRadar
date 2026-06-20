@@ -1,5 +1,6 @@
 #include "RingBuffer.h"
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace EchoRadar {

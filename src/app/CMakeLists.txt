@@ -1,3 +1,15 @@
+# Minimal sandbox executable for testing
+add_executable(echo_sandbox
+    echo_sandbox.cpp
+)
+
+if(MSVC)
+    target_compile_options(echo_sandbox PRIVATE /W4)
+else()
+    target_compile_options(echo_sandbox PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# Full EchoRadar application (Milestone 1+)
 add_executable(EchoRadar
     main.cpp
     EchoRadarApp.cpp
