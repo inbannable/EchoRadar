@@ -51,8 +51,14 @@ static void PrintDeviceList(const std::vector<AudioDeviceInfo>& devs) {
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
+    // Disable sync with C stdio to allow immediate flushing
+    std::ios::sync_with_stdio(false);
+    
     std::signal(SIGINT,  OnSignal);
+#ifndef _WIN32
+    // SIGTERM may be problematic on Windows
     std::signal(SIGTERM, OnSignal);
+#endif
 
     // ── Parse arguments ───────────────────────────────────────────────────────
     std::string deviceArg;
@@ -118,25 +124,32 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Press Ctrl+C to stop.\n\n";
+    std::cout.flush();
 
     // ── Monitor loop ──────────────────────────────────────────────────────────
     constexpr int kInterval = 100; // ms
+    int iterations = 0;
 
+    std::cerr << "[debug] Entering monitor loop...\n" << std::flush;
     while (g_running.load(std::memory_order_relaxed)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(kInterval));
 
         const AudioLevels lvl      = capture.GetCurrentLevels();
         const size_t      buffered = capture.GetAvailableFrames();
+        ++iterations;
 
         std::cout << std::fixed << std::setprecision(3)
+                  << "[" << std::setw(4) << iterations << "] "
                   << "L RMS: " << std::setw(6) << lvl.leftRms
                   << "  R RMS: " << std::setw(6) << lvl.rightRms
                   << "  L Peak: " << std::setw(6) << lvl.leftPeak
                   << "  R Peak: " << std::setw(6) << lvl.rightPeak
                   << "  Buf: " << std::setw(6) << buffered << " fr"
                   << "  [" << Bar(lvl.leftRms) << "]"
-                  << "\n" << std::flush;
+                  << "\n";
+        std::cout.flush();
     }
+    std::cerr << "[debug] Exited monitor loop (g_running=" << g_running.load() << ")\n" << std::flush;
 
     std::cout << "\nStopping...\n";
     capture.Stop();
