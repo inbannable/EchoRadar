@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <iomanip>
 #include <iostream>
 #include <string>
@@ -26,6 +27,11 @@ using namespace EchoRadar;
 static std::atomic<bool> g_running{true};
 
 static void OnSignal(int) { g_running.store(false, std::memory_order_relaxed); }
+
+static void OnSegmentationFault(int sig) {
+    std::cerr << "\n[FATAL] Segmentation fault (signal " << sig << ") - access violation!\n" << std::flush;
+    std::exit(1);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,6 +64,12 @@ int main(int argc, char* argv[]) {
 #ifndef _WIN32
     // SIGTERM may be problematic on Windows
     std::signal(SIGTERM, OnSignal);
+    // Catch segmentation faults on Unix
+    std::signal(SIGSEGV, OnSegmentationFault);
+#else
+    // On Windows, we cannot directly catch SIGSEGV the same way,
+    // but we can at least try to catch structured exceptions
+    std::signal(SIGABRT, OnSegmentationFault);
 #endif
 
     // ── Parse arguments ───────────────────────────────────────────────────────
@@ -129,49 +141,36 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "Press Ctrl+C to stop.\n\n";
-    std::cout.flush();
 
     // ── Monitor loop ──────────────────────────────────────────────────────────
     constexpr int kInterval = 100; // ms
     int iterations = 0;
-
-    std::cerr << "[debug] Entering monitor loop (g_running=" << g_running.load() << ")...\n" << std::flush;
     
     try {
         while (g_running.load(std::memory_order_relaxed)) {
-            std::cerr << "[debug] Loop iteration " << (iterations + 1) << " starting, g_running=" << g_running.load() << "\n" << std::flush;
+            ++iterations;
             
             std::this_thread::sleep_for(std::chrono::milliseconds(kInterval));
 
             if (!capture.IsRunning()) {
-                std::cerr << "[error] Capture stopped unexpectedly!\n" << std::flush;
                 break;
             }
 
             const AudioLevels lvl      = capture.GetCurrentLevels();
             const size_t      buffered = capture.GetAvailableFrames();
-            ++iterations;
 
-            std::cout << std::fixed << std::setprecision(3)
-                      << "[" << std::setw(4) << iterations << "] "
-                      << "L RMS: " << std::setw(6) << lvl.leftRms
-                      << "  R RMS: " << std::setw(6) << lvl.rightRms
-                      << "  L Peak: " << std::setw(6) << lvl.leftPeak
-                      << "  R Peak: " << std::setw(6) << lvl.rightPeak
-                      << "  Buf: " << std::setw(6) << buffered << " fr"
-                      << "  [" << Bar(lvl.leftRms) << "]"
-                      << "\n";
-            std::cout.flush();
-            
-            std::cerr << "[debug] Loop iteration " << iterations << " complete\n" << std::flush;
+            printf("[%4d] L RMS: %6.3f  R RMS: %6.3f  L Peak: %6.3f  R Peak: %6.3f  Buf: %6zu fr\n",
+                   iterations, lvl.leftRms, lvl.rightRms, lvl.leftPeak, lvl.rightPeak, buffered);
+            fflush(stdout);
         }
     } catch (const std::exception& e) {
-        std::cerr << "[error] Exception in monitor loop: " << e.what() << "\n" << std::flush;
+        std::cerr << "[error] Exception in monitor loop: " << e.what() << "\n";
     } catch (...) {
-        std::cerr << "[error] Unknown exception in monitor loop\n" << std::flush;
+        std::cerr << "[error] Unknown exception in monitor loop\n";
     }
     
-    std::cerr << "[debug] Exited monitor loop (g_running=" << g_running.load() << ", iterations=" << iterations << ")\n" << std::flush;
+    printf("Exiting normally without calling Stop()\n");
+    fflush(stdout);
 
     std::cout << "\nStopping...\n";
     capture.Stop();
