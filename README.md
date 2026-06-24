@@ -66,7 +66,12 @@ audio_monitor
 [EchoRadar Audio Monitor]
 Using device: CABLE Output (VB-Audio Virtual Cable)
 
+[AudioCapture] Started: CABLE Output (VB-Audio Virtual Cable)  ch=2  rate=48000 Hz
+Press Ctrl+C to stop.
+
 L RMS:  0.142  R RMS:  0.137  L Peak:  0.482  R Peak:  0.501  Buf:   4096 fr  [##########----------]
+L RMS:  0.155  R RMS:  0.148  L Peak:  0.510  R Peak:  0.498  Buf:   4224 fr  [##########----------]
+L RMS:  0.138  R RMS:  0.141  L Peak:  0.475  R Peak:  0.512  Buf:   4096 fr  [##########----------]
 ```
 
 The output updates every 100 ms. Press `Ctrl+C` to stop.

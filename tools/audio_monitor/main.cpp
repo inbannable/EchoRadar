@@ -135,7 +135,7 @@ int main(int argc, char* argv[]) {
                   << "  R Peak: " << std::setw(6) << lvl.rightPeak
                   << "  Buf: " << std::setw(6) << buffered << " fr"
                   << "  [" << Bar(lvl.leftRms) << "]"
-                  << "\r" << std::flush;
+                  << "\n" << std::flush;
     }
 
     std::cout << "\nStopping...\n";
