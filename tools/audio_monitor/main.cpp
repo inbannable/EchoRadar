@@ -68,8 +68,13 @@ int main(int argc, char* argv[]) {
         const std::string arg(argv[i]);
         if (arg == "--list-devices" || arg == "-l") {
             listOnly = true;
-        } else if ((arg == "--device" || arg == "-d") && i + 1 < argc) {
-            deviceArg = argv[++i];
+        } else if (arg == "--device" || arg == "-d") {
+            if (i + 1 < argc) {
+                deviceArg = argv[++i];
+            } else {
+                std::cerr << "[Error] --device requires a device name argument\n";
+                return 1;
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::cout <<
                 "Usage: audio_monitor [--list-devices] [--device <name>]\n"
@@ -130,26 +135,43 @@ int main(int argc, char* argv[]) {
     constexpr int kInterval = 100; // ms
     int iterations = 0;
 
-    std::cerr << "[debug] Entering monitor loop...\n" << std::flush;
-    while (g_running.load(std::memory_order_relaxed)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(kInterval));
+    std::cerr << "[debug] Entering monitor loop (g_running=" << g_running.load() << ")...\n" << std::flush;
+    
+    try {
+        while (g_running.load(std::memory_order_relaxed)) {
+            std::cerr << "[debug] Loop iteration " << (iterations + 1) << " starting, g_running=" << g_running.load() << "\n" << std::flush;
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(kInterval));
 
-        const AudioLevels lvl      = capture.GetCurrentLevels();
-        const size_t      buffered = capture.GetAvailableFrames();
-        ++iterations;
+            if (!capture.IsRunning()) {
+                std::cerr << "[error] Capture stopped unexpectedly!\n" << std::flush;
+                break;
+            }
 
-        std::cout << std::fixed << std::setprecision(3)
-                  << "[" << std::setw(4) << iterations << "] "
-                  << "L RMS: " << std::setw(6) << lvl.leftRms
-                  << "  R RMS: " << std::setw(6) << lvl.rightRms
-                  << "  L Peak: " << std::setw(6) << lvl.leftPeak
-                  << "  R Peak: " << std::setw(6) << lvl.rightPeak
-                  << "  Buf: " << std::setw(6) << buffered << " fr"
-                  << "  [" << Bar(lvl.leftRms) << "]"
-                  << "\n";
-        std::cout.flush();
+            const AudioLevels lvl      = capture.GetCurrentLevels();
+            const size_t      buffered = capture.GetAvailableFrames();
+            ++iterations;
+
+            std::cout << std::fixed << std::setprecision(3)
+                      << "[" << std::setw(4) << iterations << "] "
+                      << "L RMS: " << std::setw(6) << lvl.leftRms
+                      << "  R RMS: " << std::setw(6) << lvl.rightRms
+                      << "  L Peak: " << std::setw(6) << lvl.leftPeak
+                      << "  R Peak: " << std::setw(6) << lvl.rightPeak
+                      << "  Buf: " << std::setw(6) << buffered << " fr"
+                      << "  [" << Bar(lvl.leftRms) << "]"
+                      << "\n";
+            std::cout.flush();
+            
+            std::cerr << "[debug] Loop iteration " << iterations << " complete\n" << std::flush;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[error] Exception in monitor loop: " << e.what() << "\n" << std::flush;
+    } catch (...) {
+        std::cerr << "[error] Unknown exception in monitor loop\n" << std::flush;
     }
-    std::cerr << "[debug] Exited monitor loop (g_running=" << g_running.load() << ")\n" << std::flush;
+    
+    std::cerr << "[debug] Exited monitor loop (g_running=" << g_running.load() << ", iterations=" << iterations << ")\n" << std::flush;
 
     std::cout << "\nStopping...\n";
     capture.Stop();
