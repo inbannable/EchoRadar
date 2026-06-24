@@ -67,24 +67,17 @@ audio_monitor -d "mic"
 **Example output:**
 ```
 [EchoRadar Audio Monitor]
-Using device: 阵列麦克风 (AMD Audio Device)
+Using device: AMD Stereo Microphone
 
-[AudioCapture] Started: 阵列麦克风 (AMD Audio Device)  ch=2  rate=48000 Hz
+[AudioCapture] Started: AMD Stereo Microphone  ch=2  rate=48000 Hz
 Press Ctrl+C to stop.
 
-[debug] Entering monitor loop...
-[   1] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
-[debug] Loop iteration 1 starting...
-[debug] Loop iteration 1 complete
-[   2] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
-[   3] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
-[   4] L RMS:  0.015  R RMS:  0.012  L Peak:  0.084  R Peak:  0.076  Buf:   4800 fr  [#---------]
+[   1] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr
+[   2] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr
+[   3] L RMS:  0.021  R RMS:  0.019  L Peak:  0.062  R Peak:  0.057  Buf:      0 fr
+[   4] L RMS:  0.013  R RMS:  0.013  L Peak:  0.036  R Peak:  0.039  Buf:      0 fr
+[   5] L RMS:  0.001  R RMS:  0.001  L Peak:  0.002  R Peak:  0.002  Buf:      0 fr
 ```
-
-**Debug output:** The `[debug]` messages are printed to stderr to help troubleshoot. They show:
-- Loop entry/exit status
-- Iteration start/complete markers
-- Any exceptions or device disconnections
 
 The output updates every 100 ms and continues until you press `Ctrl+C`.
 
@@ -198,8 +191,15 @@ If you're using OBS + VB-Cable for game audio capture:
 
 - **L RMS / R RMS**: Root Mean Square (volume) of left/right channel in the last 100 ms. Range: [0.0, 1.0]
 - **L Peak / R Peak**: Highest absolute sample value in left/right channel in the last 100 ms. Range: [0.0, 1.0]
-- **Buf**: Number of stereo frames currently buffered in the ring buffer (capacity: ~192,000 @ 48 kHz stereo)
-- **[###---]**: Visual bar chart of left channel RMS for quick feedback
+- **Buf**: Number of stereo frames currently buffered (0 for Milestone 1, since ring buffer is disabled)
+
+### Known Limitations
+
+**Milestone 1 (Current):** 
+- Ring buffer (audio PCM storage) is temporarily disabled due to a buffer overflow issue being investigated
+- This doesn't affect level monitoring (RMS/Peak), which works perfectly
+- The `Buf` count will always show 0 because frames are not being stored
+- For Milestone 3 (STFT analysis), the ring buffer will be fixed to enable full audio data access
 
 ### Verification Checklist
 
