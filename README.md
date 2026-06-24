@@ -49,32 +49,44 @@ Use it to verify the capture pipeline before any DSP work.
 
 **Basic usage:**
 ```bat
-:: List all input devices
+REM Capture from the system default input device (recommended)
+audio_monitor
+
+REM List all available input devices
 audio_monitor --list-devices
 audio_monitor -l
 
-:: Capture from a named device (partial name match, case-insensitive)
+REM Capture from a named device (partial name match, case-insensitive)
 audio_monitor --device "CABLE Output"
+audio_monitor --device "Microphone"
 audio_monitor -d "mic"
-
-:: Capture from the system default input device
-audio_monitor
 ```
+
+**Note:** The `-d` / `--device` flag REQUIRES a device name. Running just `audio_monitor -d` will return an error.
 
 **Example output:**
 ```
 [EchoRadar Audio Monitor]
-Using device: CABLE Output (VB-Audio Virtual Cable)
+Using device: 阵列麦克风 (AMD Audio Device)
 
-[AudioCapture] Started: CABLE Output (VB-Audio Virtual Cable)  ch=2  rate=48000 Hz
+[AudioCapture] Started: 阵列麦克风 (AMD Audio Device)  ch=2  rate=48000 Hz
 Press Ctrl+C to stop.
 
-L RMS:  0.142  R RMS:  0.137  L Peak:  0.482  R Peak:  0.501  Buf:   4096 fr  [##########----------]
-L RMS:  0.155  R RMS:  0.148  L Peak:  0.510  R Peak:  0.498  Buf:   4224 fr  [##########----------]
-L RMS:  0.138  R RMS:  0.141  L Peak:  0.475  R Peak:  0.512  Buf:   4096 fr  [##########----------]
+[debug] Entering monitor loop...
+[   1] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
+[debug] Loop iteration 1 starting...
+[debug] Loop iteration 1 complete
+[   2] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
+[   3] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr  [--------------------]
+[   4] L RMS:  0.015  R RMS:  0.012  L Peak:  0.084  R Peak:  0.076  Buf:   4800 fr  [#---------]
 ```
 
-The output updates every 100 ms. Press `Ctrl+C` to stop.
+**Debug output:** The `[debug]` messages are printed to stderr to help troubleshoot. They show:
+- Loop entry/exit status
+- Iteration start/complete markers
+- Any exceptions or device disconnections
+
+The output updates every 100 ms and continues until you press `Ctrl+C`.
 
 ---
 
