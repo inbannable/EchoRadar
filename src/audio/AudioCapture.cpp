@@ -58,8 +58,12 @@ struct AudioCapture::Impl {
     static void DataCallback(ma_device* pDev, void* /*pOut*/,
                               const void* pIn, ma_uint32 frameCount)
     {
+        if (!pDev || !pDev->pUserData) return;  // Safety check added
+        
         auto* self = static_cast<Impl*>(pDev->pUserData);
         if (!pIn || frameCount == 0) return;
+        if (!self) return;  // Additional safety check
+        
         const auto* samples = static_cast<const float*>(pIn);
 
         // Push raw samples — no heap allocation, never blocks.
@@ -102,6 +106,7 @@ bool AudioCapture::Start(const std::string& device_name, FrameCallback callback)
 
 bool AudioCapture::StartInternal(const char* deviceName) {
     if (m_impl->running.load(std::memory_order_acquire)) return false;
+    m_impl->ringBuf.Clear();
 
     // ── Initialise context ────────────────────────────────────────────────────
     if (ma_context_init(nullptr, 0, nullptr, &m_impl->ctx) != MA_SUCCESS) {
@@ -199,6 +204,9 @@ bool AudioCapture::StartInternal(const char* deviceName) {
 void AudioCapture::Stop() {
     if (!m_impl || !m_impl->running.load(std::memory_order_acquire)) return;
     m_impl->running.store(false, std::memory_order_release);
+    
+    // Give the audio callback time to see the running flag and exit
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     if (m_impl->devInit) {
         ma_device_uninit(&m_impl->dev); // blocks until in-flight callback returns
@@ -208,7 +216,6 @@ void AudioCapture::Stop() {
         ma_context_uninit(&m_impl->ctx);
         m_impl->ctxInit = false;
     }
-    std::cout << "[AudioCapture] Stopped.\n";
 }
 
 bool AudioCapture::IsRunning() const {

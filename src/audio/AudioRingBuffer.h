@@ -45,9 +45,9 @@ public:
     size_t CapacityFrames() const { return m_capacityFrames; }
 
 private:
-    std::vector<float>              m_data;           ///< m_capacityFrames * kChannels floats
     size_t                          m_capacityFrames; ///< always a power-of-two
     size_t                          m_mask;           ///< m_capacityFrames - 1
+    std::vector<float>              m_data;           ///< m_capacityFrames * kChannels floats
 
     // Cache-line separated to avoid false sharing between producer and consumer.
     alignas(64) std::atomic<size_t> m_writeIdx{0};   ///< owned by producer

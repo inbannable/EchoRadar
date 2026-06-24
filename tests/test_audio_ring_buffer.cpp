@@ -28,6 +28,11 @@ TEST(AudioRingBuffer, CapacityRoundsUpToPowerOfTwo) {
     EXPECT_EQ(rb2.CapacityFrames(), 8u);
 }
 
+TEST(AudioRingBuffer, MinimumCapacityIsTwoFrames) {
+    AudioRingBuffer rb(0); // 0 -> minimum 2
+    EXPECT_EQ(rb.CapacityFrames(), 2u);
+}
+
 TEST(AudioRingBuffer, EmptyBufferReturnsZero) {
     AudioRingBuffer rb(16);
     EXPECT_EQ(rb.GetAvailableFrames(), 0u);
@@ -93,6 +98,10 @@ TEST(AudioRingBuffer, FullDropsNewest) {
     auto data = MakeStereo(1.f, 6); // 6 frames — 2 should be dropped
     const size_t written = rb.PushInterleaved(data.data(), 6);
     EXPECT_EQ(written, 4u); // only 4 fit
+    EXPECT_EQ(rb.GetAvailableFrames(), 4u);
+
+    // Already full: additional writes should be dropped.
+    EXPECT_EQ(rb.PushInterleaved(data.data(), 2), 0u);
     EXPECT_EQ(rb.GetAvailableFrames(), 4u);
 }
 
