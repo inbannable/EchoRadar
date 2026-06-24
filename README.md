@@ -56,20 +56,30 @@ REM List all available input devices
 audio_monitor --list-devices
 audio_monitor -l
 
+REM Show device types (microphone, stereo mix, virtual cable, etc.)
+audio_monitor --list-devices-detailed
+
 REM Capture from a named device (partial name match, case-insensitive)
 audio_monitor --device "CABLE Output"
+audio_monitor --device "Stereo Mix"
 audio_monitor --device "Microphone"
 audio_monitor -d "mic"
 ```
+
+**Device Types:**
+- 🎙️ **Microphone** (ambient sound) - your physical mic
+- 🎮 **[GAME AUDIO]** (Stereo Mix) - Windows loopback device for internal audio
+- 🔌 **[VIRTUAL CABLE]** (VB-Cable) - for advanced routing via OBS
+- Other types shown with `--list-devices-detailed`
 
 **Note:** The `-d` / `--device` flag REQUIRES a device name. Running just `audio_monitor -d` will return an error.
 
 **Example output:**
 ```
 [EchoRadar Audio Monitor]
-Using device: AMD Stereo Microphone
+Using device: Stereo Mix (system audio)
 
-[AudioCapture] Started: AMD Stereo Microphone  ch=2  rate=48000 Hz
+[AudioCapture] Started: Stereo Mix  ch=2  rate=48000 Hz
 Press Ctrl+C to stop.
 
 [   1] L RMS:  0.000  R RMS:  0.000  L Peak:  0.000  R Peak:  0.000  Buf:      0 fr
@@ -80,6 +90,120 @@ Press Ctrl+C to stop.
 ```
 
 The output updates every 100 ms and continues until you press `Ctrl+C`.
+
+---
+
+## Setting Up Game Audio Capture
+
+By default, EchoRadar captures from your **physical microphone** (ambient sound). However, for **CS2 gunshot detection**, you need to capture **game audio output** instead.
+
+Windows provides several options:
+
+### Option 1: Enable Windows Stereo Mix (Recommended if available)
+
+**What:** Capture your PC's internal audio output as if it were a microphone input.
+
+**Steps:**
+
+1. **Check if Stereo Mix is available:**
+   - Right-click the speaker icon in the Windows taskbar → **Open Volume mixer**
+   - Click **Volume mixer** or **Advanced** > **App volume and device preferences**
+   - Look for an input device called "Stereo Mix", "What U Hear", "Wave Out Mix", or similar
+
+2. **If NOT visible, enable it:**
+   - Right-click the speaker icon → **Open Sound settings**
+   - Scroll down and click **Advanced** > **Volume mixer**
+   - Click **Show inactive devices** (or **Show disabled devices**)
+   - Right-click on "Stereo Mix" → **Enable**
+   - If still not visible: right-click in the recording devices list → **Show disabled devices**
+   - Right-click "Stereo Mix" → **Enable** and **Set as default**
+
+3. **Test it:**
+   ```bat
+   .\build\tools\audio_monitor\Release\audio_monitor.exe --list-devices-detailed
+   ```
+   Look for a device with type **[system audio]**:
+   ```
+   [0] Stereo Mix (system audio)  [SYSTEM DEFAULT]
+   ```
+
+4. **Capture game audio:**
+   ```bat
+   .\build\tools\audio_monitor\Release\audio_monitor.exe
+   ```
+   Run CS2 or another game. You should see RMS/peak values respond to game audio (gunshots, footsteps).
+
+**Troubleshooting:**
+- If Stereo Mix doesn't appear: some audio drivers don't support it (e.g., Intel onboard, some USB devices)
+- If not selectable: check Windows audio drivers in Device Manager; update if outdated
+- No values appearing? Check Windows Volume mixer to ensure Stereo Mix is NOT muted
+
+---
+
+### Option 2: VB-Audio Virtual Cable (Works on most systems)
+
+**What:** A virtual audio loopback device. Any audio can be routed to it and captured by EchoRadar.
+
+**Setup:**
+
+1. **Download and install VB-Cable:**
+   - Visit: https://vb-audio.com/Cable/
+   - Download the installer
+   - Run as Administrator, reboot when prompted
+
+2. **Verify installation:**
+   ```bat
+   .\build\tools\audio_monitor\Release\audio_monitor.exe --list-devices
+   ```
+   Look for `CABLE Output` or `VB-Audio Virtual Cable`:
+   ```
+   [1] CABLE Output (VB-Audio Virtual Cable)  [VIRTUAL CABLE]
+   ```
+
+3. **Route audio to VB-Cable** (see OBS section below if using OBS)
+
+4. **Capture with EchoRadar:**
+   ```bat
+   .\build\tools\audio_monitor\Release\audio_monitor.exe --device "CABLE"
+   ```
+
+---
+
+### Option 3: OBS Virtual Audio Output (Best for streaming + detection)
+
+**What:** Use OBS to capture and route your game audio to a virtual cable for EchoRadar.
+
+**Setup:**
+
+1. **Install VB-Cable** (see Option 2 above)
+
+2. **In OBS:**
+   - Click **Settings** (bottom-right)
+   - Go **Audio**
+   - Under **Monitoring Devices**: select `VB-Cable Input` for the output you want to monitor
+   - (Or: Right-click an audio source → **Audio Monitoring** → **Monitor and Output**)
+
+3. **Alternatively, use OBS's built-in routing:**
+   - In OBS, right-click your desktop audio source → **Filters**
+   - Add a filter → **Audio Monitor** 
+   - Set Output Device to `VB-Cable Input`
+
+4. **Test with EchoRadar:**
+   ```bat
+   .\build\tools\audio_monitor\Release\audio_monitor.exe --device "CABLE"
+   ```
+   Launch CS2 in OBS (or your streaming setup). EchoRadar should now capture game audio.
+
+---
+
+### Quick Reference: Which Option to Use?
+
+| Scenario | Recommendation |
+|----------|---|
+| Want to play CS2 locally (no streaming) | **Stereo Mix** (if available) or **VB-Cable** |
+| Already streaming with OBS | **OBS Virtual Cable routing** |
+| Stereo Mix unavailable | **VB-Cable** |
+| Need perfect game audio fidelity | **VB-Cable** (no quality loss) |
 
 ---
 
@@ -95,9 +219,23 @@ Run:
 Output should show all audio input devices on your system, with `<default>` marking the system default:
 ```
 [EchoRadar] Available input devices (3):
-  [0] Microphone (Realtek Audio)  <default>
+  [0] Stereo Mix  <default>  [GAME AUDIO]
+  [1] CABLE Output  [VIRTUAL CABLE]
+  [2] Microphone (Realtek Audio)
+```
+
+**For detailed device type information, run:**
+```
+audio_monitor --list-devices-detailed
+```
+```
+[EchoRadar] Available input devices (3):
+  [0] Stereo Mix
+       Type: system audio (Stereo Mix)  [SYSTEM DEFAULT]
   [1] CABLE Output (VB-Audio Virtual Cable)
-  [2] Line In (Line Input)
+       Type: virtual cable  [VIRTUAL CABLE]
+  [2] Microphone (Realtek Audio)
+       Type: microphone (ambient sound)
 ```
 
 **What to look for:**

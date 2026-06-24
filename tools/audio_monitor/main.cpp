@@ -41,16 +41,34 @@ static std::string Bar(float value, int width = 20) {
     return std::string(filled, '#') + std::string(width - filled, '-');
 }
 
-static void PrintDeviceList(const std::vector<AudioDeviceInfo>& devs) {
+static void PrintDeviceList(const std::vector<AudioDeviceInfo>& devs, bool detailed = false) {
     std::cout << "[EchoRadar] Available input devices (" << devs.size() << "):\n";
     if (devs.empty()) {
         std::cout << "  (none found — is an audio driver installed?)\n";
         return;
     }
-    for (size_t i = 0; i < devs.size(); ++i) {
-        std::cout << "  [" << i << "] " << devs[i].name;
-        if (devs[i].isDefault) std::cout << "  <default>";
-        std::cout << '\n';
+    
+    if (detailed) {
+        // Detailed list with device types for debugging
+        for (size_t i = 0; i < devs.size(); ++i) {
+            std::cout << "  [" << i << "] " << devs[i].name << "\n"
+                      << "       Type: " << DeviceTypeString(devs[i].type);
+            if (devs[i].isDefault) std::cout << "  [SYSTEM DEFAULT]";
+            std::cout << '\n';
+        }
+    } else {
+        // Simple list with type indicators
+        for (size_t i = 0; i < devs.size(); ++i) {
+            std::cout << "  [" << i << "] " << devs[i].name;
+            if (devs[i].isDefault) std::cout << "  <default>";
+            // Add type indicator if not microphone
+            if (devs[i].type == AudioDeviceType::Loopback) {
+                std::cout << "  [GAME AUDIO]";
+            } else if (devs[i].type == AudioDeviceType::VirtualCable) {
+                std::cout << "  [VIRTUAL CABLE]";
+            }
+            std::cout << '\n';
+        }
     }
 }
 
@@ -75,11 +93,15 @@ int main(int argc, char* argv[]) {
     // ── Parse arguments ───────────────────────────────────────────────────────
     std::string deviceArg;
     bool        listOnly = false;
+    bool        detailedList = false;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
         if (arg == "--list-devices" || arg == "-l") {
             listOnly = true;
+        } else if (arg == "--list-devices-detailed" || arg == "--list-detailed") {
+            listOnly = true;
+            detailedList = true;
         } else if (arg == "--device" || arg == "-d") {
             if (i + 1 < argc) {
                 deviceArg = argv[++i];
@@ -89,10 +111,18 @@ int main(int argc, char* argv[]) {
             }
         } else if (arg == "--help" || arg == "-h") {
             std::cout <<
-                "Usage: audio_monitor [--list-devices] [--device <name>]\n"
-                "  --list-devices, -l     Print available input devices and exit.\n"
-                "  --device <name>, -d    Capture from a device matching <name> "
-                                         "(partial, case-insensitive).\n";
+                "Usage: audio_monitor [options]\n\n"
+                "Options:\n"
+                "  --list-devices              List available input devices\n"
+                "  --list-devices-detailed     Show device types (microphone, stereo mix, etc.)\n"
+                "  --device <name>             Capture from a specific device (case-insensitive match)\n"
+                "  --help                      Show this help message\n\n"
+                "Examples:\n"
+                "  audio_monitor                     Use default device\n"
+                "  audio_monitor --list-devices      List all devices\n"
+                "  audio_monitor --device \"CABLE\"   Capture from VB-Cable\n"
+                "  audio_monitor --device \"mix\"     Capture from Stereo Mix\n"
+                "\nFor CS2 gunshot detection, use Stereo Mix or Virtual Cable for game audio.\n";
             return 0;
         }
     }
@@ -102,13 +132,13 @@ int main(int argc, char* argv[]) {
     const auto& devs = mgr.GetInputDevices();
 
     if (listOnly) {
-        PrintDeviceList(devs);
+        PrintDeviceList(devs, detailedList);
         return 0;
     }
 
     if (devs.empty()) {
         std::cerr << "[Warning] No input devices found.\n";
-        PrintDeviceList(devs);
+        PrintDeviceList(devs, false);
         return 1;
     }
 
@@ -121,7 +151,7 @@ int main(int argc, char* argv[]) {
     if (!deviceArg.empty()) {
         const auto found = mgr.FindInputDeviceByName(deviceArg);
         if (found) {
-            std::cout << "Using device: " << found->name << "\n\n";
+            std::cout << "Using device: " << found->name << " (" << DeviceTypeString(found->type) << ")\n\n";
         } else {
             std::cerr << "[Warning] Device '" << deviceArg
                       << "' not found. Falling back to default.\n\n";
@@ -131,7 +161,11 @@ int main(int argc, char* argv[]) {
 
     if (!started) {
         const auto def = mgr.GetDefaultInputDevice();
-        std::cout << "Using device: " << (def ? def->name : "default") << "\n\n";
+        std::cout << "Using device: " << (def ? def->name : "default");
+        if (def) {
+            std::cout << " (" << DeviceTypeString(def->type) << ")";
+        }
+        std::cout << "\n\n";
         started = capture.StartDefault();
     }
 

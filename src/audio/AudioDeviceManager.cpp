@@ -7,6 +7,50 @@
 namespace EchoRadar {
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Device Type Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Heuristic to classify device type by name patterns.
+static AudioDeviceType ClassifyDevice(const std::string& name) {
+    std::string lower(name);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    
+    // Virtual Cable devices (VB-Audio, etc.)
+    if (lower.find("cable") != std::string::npos ||
+        lower.find("vb-audio") != std::string::npos ||
+        lower.find("meeter") != std::string::npos ||
+        lower.find("obs") != std::string::npos) {
+        return AudioDeviceType::VirtualCable;
+    }
+    
+    // Stereo Mix / Loopback (system audio output capture)
+    if (lower.find("stereo mix") != std::string::npos ||
+        lower.find("what u hear") != std::string::npos ||
+        lower.find("loopback") != std::string::npos ||
+        lower.find("wave out mix") != std::string::npos ||
+        lower.find("mix") != std::string::npos) {
+        return AudioDeviceType::Loopback;
+    }
+    
+    // Line Input / Aux
+    if (lower.find("line in") != std::string::npos ||
+        lower.find("aux") != std::string::npos) {
+        return AudioDeviceType::LineIn;
+    }
+    
+    // Physical Microphones
+    if (lower.find("microphone") != std::string::npos ||
+        lower.find("mic ") != std::string::npos ||
+        lower.find("mic)") != std::string::npos) {
+        return AudioDeviceType::Microphone;
+    }
+    
+    // Default to Microphone for unknown devices (safer default)
+    return AudioDeviceType::Microphone;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Impl
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -27,6 +71,7 @@ struct AudioDeviceManager::Impl {
         auto& out = *static_cast<EnumUD*>(ud)->out;
         AudioDeviceInfo info;
         info.name      = pInfo->name;
+        info.type      = ClassifyDevice(pInfo->name);  // Detect device type
         info.isDefault = (pInfo->isDefault != 0);
         out.push_back(std::move(info));
         return MA_TRUE;
@@ -37,11 +82,18 @@ struct AudioDeviceManager::Impl {
         if (!ctxInit) return;
         EnumUD ud{&devices};
         ma_context_enumerate_devices(&ctx, EnumCallback, &ud);
-        // Sort so default device is always first.
+        
+        // Sort by priority: loopback > virtual cable > default > microphone
         std::stable_sort(devices.begin(), devices.end(),
                          [](const AudioDeviceInfo& a, const AudioDeviceInfo& b) {
-                             return static_cast<int>(a.isDefault) >
-                                    static_cast<int>(b.isDefault);
+                             auto priority = [](const AudioDeviceInfo& d) {
+                                 if (d.type == AudioDeviceType::Loopback) return 4;
+                                 if (d.type == AudioDeviceType::VirtualCable) return 3;
+                                 if (d.isDefault) return 2;
+                                 if (d.type == AudioDeviceType::Microphone) return 1;
+                                 return 0;
+                             };
+                             return priority(a) > priority(b);
                          });
     }
 };
