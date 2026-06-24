@@ -67,9 +67,7 @@ struct AudioCapture::Impl {
         const auto* samples = static_cast<const float*>(pIn);
 
         // Push raw samples — no heap allocation, never blocks.
-        // Disabled for Milestone 1 - ring buffer not needed for level monitoring
-        // TODO: Fix buffer overflow issue in PushInterleaved() for Milestone 3
-        // self->ringBuf.PushInterleaved(samples, frameCount);
+        self->ringBuf.PushInterleaved(samples, frameCount);
 
         // Update rolling level metrics — no heap allocation.
         self->UpdateLevels(samples, frameCount);
@@ -108,6 +106,7 @@ bool AudioCapture::Start(const std::string& device_name, FrameCallback callback)
 
 bool AudioCapture::StartInternal(const char* deviceName) {
     if (m_impl->running.load(std::memory_order_acquire)) return false;
+    m_impl->ringBuf.Clear();
 
     // ── Initialise context ────────────────────────────────────────────────────
     if (ma_context_init(nullptr, 0, nullptr, &m_impl->ctx) != MA_SUCCESS) {
