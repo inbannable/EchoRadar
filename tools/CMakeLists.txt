@@ -1,2 +1,5 @@
 add_subdirectory(dataset_recorder)
 add_subdirectory(audio_monitor)
+add_subdirectory(stft_monitor)
+add_subdirectory(feature_monitor)
+add_subdirectory(gunshot_monitor)

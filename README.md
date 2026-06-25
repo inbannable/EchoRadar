@@ -34,7 +34,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 
 # Run tests
-ctest --test-dir build --output-on-failure
+ctest --test-dir build -C Release --output-on-failure
 ```
 
 ## Audio Monitor (Milestone 1)
@@ -90,6 +90,102 @@ Press Ctrl+C to stop.
 ```
 
 The output updates every 100 ms and continues until you press `Ctrl+C`.
+
+---
+
+## STFT Monitor (Milestone 3)
+
+`stft_monitor` reads live PCM from `AudioCapture`/`AudioRingBuffer`, feeds `STFTProcessor`,
+and prints real-time stereo spectrum summaries.
+
+**Executable path:**
+```
+.\build\tools\stft_monitor\Release\stft_monitor.exe
+```
+
+**Basic usage:**
+```bat
+REM Use default input device
+stft_monitor
+
+REM List available input devices
+stft_monitor --list-devices
+
+REM Capture from a named device (case-insensitive partial match)
+stft_monitor --device "CABLE Output"
+```
+
+**Example output (live, updates on one line):**
+```
+Frames: 120      Left peak:    984.4 Hz  Right peak:   1007.8 Hz
+Left energy:     12.430        Right energy:    11.980
+Buffered PCM: 4096 fr          Buffered STFT: 3
+```
+
+---
+
+## Feature Monitor (Milestone 4)
+
+`feature_monitor` reads live audio, runs STFT, then prints compact semantic audio features
+from `FeatureExtractor` in real time.
+
+**Executable path:**
+```
+.\build\tools\feature_monitor\Release\feature_monitor.exe
+```
+
+**Basic usage:**
+```bat
+REM Use default input device
+feature_monitor
+
+REM List available input devices
+feature_monitor --list-devices
+
+REM Capture from a named device
+feature_monitor --device "CABLE Output"
+```
+
+**Example output (live, updates on one line):**
+```
+Frames: 245  Energy:   41.322  LogE:  3.745  Rise:  0.412  Flux:  0.238  HF:  0.197
+Low:   8.144  Mid:  25.102  High:   8.076  Centroid: 1720.4 Hz  Flatness: 0.318
+Transient: 0.742  L/R: -0.154
+```
+
+---
+
+## Gunshot Monitor (Milestone 5)
+
+`gunshot_monitor` reads live audio, runs STFT + feature extraction, then feeds the
+rule-based `GunshotEventDetector` to print live score/state/event summaries.
+
+**Executable path:**
+```
+.\build\tools\gunshot_monitor\Release\gunshot_monitor.exe
+```
+
+**Basic usage:**
+```bat
+REM Use default input device
+gunshot_monitor
+
+REM List available input devices
+gunshot_monitor --list-devices
+
+REM Capture from a named device
+gunshot_monitor --device "CABLE Output"
+```
+
+**Example output:**
+```
+[Gunshot Monitor]
+Frames: 2840  State: InCandidate  Score: 0.83  Events: 3  PCM:   4096
+
+[GunshotEvent]
+onset=12.384s peak=12.401s end=12.438s duration=0.053s
+peakScore=0.910 prob=0.910 lr=-0.120 centroid=2840.0 hfRatio=0.460
+```
 
 ---
 
@@ -385,7 +481,7 @@ RingBuffer (lock-free, thread-safe)
       ▼
 STFTProcessor (KissFFT, 1024-pt, Hann window)
       │
-      ├── GunshotDetector  ── GunshotEvent  ─┐
+      ├── GunshotEventDetector ── GunshotEvent ─┐
       │                                       ├─▶ FeatureExtractor
       └── FootstepDetector ── FootstepEvent  ─┘        │
                                                         ▼
@@ -405,11 +501,11 @@ STFTProcessor (KissFFT, 1024-pt, Hann window)
 | 0 | Project Initialization | ✅ |
 | 1 | AudioCapture (miniaudio, AudioDeviceManager, AudioRingBuffer) | ✅ |
 | 2 | RingBuffer (DSP frame buffer) | ✅ |
-| 3 | STFTProcessor | 🔲 |
-| 4 | GunshotDetector | 🔲 |
-| 5 | FootstepDetector | 🔲 |
-| 6 | Dataset Recorder Tool | 🔲 |
-| 7 | FeatureExtractor | 🔲 |
+| 3 | STFTProcessor | ✅ |
+| 4 | FeatureExtractor | ✅ |
+| 5 | GunshotEventDetector | ✅ |
+| 6 | FootstepDetector | 🔲 |
+| 7 | Dataset Recorder Tool | 🔲 |
 | 8 | KNNDirectionEstimator | 🔲 |
 | 9 | DirectionTracker | 🔲 |
 | 10 | OverlayRenderer | 🔲 |

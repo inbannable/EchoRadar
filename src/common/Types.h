@@ -1,4 +1,5 @@
 #pragma once
+#include "../detector/GunshotEvent.h"
 #include <cstdint>
 #include <vector>
 
@@ -33,17 +34,28 @@ struct Spectrogram {
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
-struct GunshotEvent {
-    float    confidence{0.0f};  // 0..1
-    uint64_t timestamp{0};      // ms since epoch
-};
-
 struct FootstepEvent {
     float    confidence{0.0f};
     uint64_t timestamp{0};
 };
 
 // ── Features ─────────────────────────────────────────────────────────────────
+
+struct AudioFeatures {
+    float totalEnergy{0.0f};
+    float logEnergy{0.0f};          // log1p(total spectral power)
+    float energyRise{0.0f};         // positive rise vs previous EMA/frame
+    float spectralFlux{0.0f};       // frame-to-frame spectral change
+    float lowBandEnergy{0.0f};      // 0 - 300 Hz
+    float midBandEnergy{0.0f};      // 300 - 2000 Hz
+    float highBandEnergy{0.0f};     // 2000+ Hz
+    float hfEnergyRatio{0.0f};      // highBandEnergy / totalEnergy
+    float spectralCentroid{0.0f};   // Hz
+    float spectralFlatness{0.0f};   // [0, 1]
+    float energyDelta{0.0f};        // energy change vs previous frame
+    float transientScore{0.0f};     // [0, 1]
+    float leftRightBalance{0.0f};   // [-1, 1]
+};
 
 struct FeatureVector {
     float ild{0.0f};              // Interaural Level Difference  (dB)
