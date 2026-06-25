@@ -1,6 +1,8 @@
 add_library(echoradar_dsp STATIC
     RingBuffer.cpp
     RingBuffer.h
+    WindowFunctions.cpp
+    WindowFunctions.h
     STFTProcessor.cpp
     STFTProcessor.h
     ../common/Types.h
