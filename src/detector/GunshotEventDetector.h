@@ -19,6 +19,9 @@ public:
     float GetLastScore() const { return m_lastScore; }
     DetectorState GetState() const { return m_state; }
     const EventDetectorConfig& GetConfig() const { return m_cfg; }
+    float GetTriggerThreshold() const { return m_cfg.triggerThreshold; }
+    float GetReleaseThreshold() const { return m_cfg.releaseThreshold; }
+    void SetTriggerThreshold(float triggerThreshold);
 
 private:
     struct CandidateState {

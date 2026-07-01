@@ -189,6 +189,45 @@ peakScore=0.910 prob=0.910 lr=-0.120 centroid=2840.0 hfRatio=0.460
 
 ---
 
+## Gunshot Visualizer (Milestone 5.5)
+
+`gunshot_visualizer` is a real-time Dear ImGui debug dashboard for the full gunshot
+detection chain:
+
+`AudioCapture -> AudioRingBuffer -> STFTProcessor -> FeatureExtractor -> GunshotEventDetector`
+
+It visualizes:
+
+- Detector status (`Idle / InCandidate / Cooldown / Triggered`)
+- Rolling score curve + trigger threshold line
+- Feature curves (`Energy`, `Energy Rise`, `Transient Score`, `HF Energy Ratio`, `Spectral Flux`)
+- Event timeline markers with peak scores
+
+**Executable path (Windows):**
+```
+.\build\tools\gunshot_visualizer\Release\gunshot_visualizer.exe
+```
+
+**Basic usage:**
+```bat
+REM Use default input device
+gunshot_visualizer
+
+REM List available input devices
+gunshot_visualizer --list-devices
+
+REM Capture from a named device
+gunshot_visualizer --device "CABLE Output"
+```
+
+**Runtime controls (GUI):**
+- `History Length` (bounded ring history)
+- `Trigger Threshold` (applies to detector immediately)
+- `Auto Scale`
+- `Display Window (s)` (5~10 seconds)
+
+---
+
 ## Setting Up Game Audio Capture
 
 By default, EchoRadar captures from your **physical microphone** (ambient sound). However, for **CS2 gunshot detection**, you need to capture **game audio output** instead.
@@ -504,6 +543,7 @@ STFTProcessor (KissFFT, 1024-pt, Hann window)
 | 3 | STFTProcessor | ✅ |
 | 4 | FeatureExtractor | ✅ |
 | 5 | GunshotEventDetector | ✅ |
+| 5.5 | Gunshot Visualizer (Debug Dashboard) | ✅ |
 | 6 | FootstepDetector | 🔲 |
 | 7 | Dataset Recorder Tool | 🔲 |
 | 8 | KNNDirectionEstimator | 🔲 |

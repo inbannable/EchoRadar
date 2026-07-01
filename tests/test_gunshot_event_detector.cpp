@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "../src/detector/GunshotEventDetector.h"
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 
 using namespace EchoRadar;
@@ -177,4 +178,11 @@ TEST(GunshotEventDetector, CooldownSuppressesImmediateRetrigger) {
     PushFrames(detector, frames);
 
     EXPECT_EQ(detector.GetAvailableEvents(), 1u);
+}
+
+TEST(GunshotEventDetector, TriggerThresholdCanBeUpdatedAtRuntime) {
+    GunshotEventDetector detector;
+    detector.SetTriggerThreshold(0.80f);
+    EXPECT_FLOAT_EQ(detector.GetTriggerThreshold(), 0.80f);
+    EXPECT_THROW(detector.SetTriggerThreshold(detector.GetReleaseThreshold()), std::invalid_argument);
 }

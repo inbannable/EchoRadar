@@ -46,6 +46,13 @@ bool GunshotEventDetector::PopEvent(GunshotEvent& outEvent) {
     return true;
 }
 
+void GunshotEventDetector::SetTriggerThreshold(float triggerThreshold) {
+    if (triggerThreshold <= m_cfg.releaseThreshold) {
+        throw std::invalid_argument("triggerThreshold must be greater than releaseThreshold");
+    }
+    m_cfg.triggerThreshold = triggerThreshold;
+}
+
 float GunshotEventDetector::Clamp01(float value) const {
     return std::clamp(value, 0.0f, 1.0f);
 }
