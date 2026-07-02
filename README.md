@@ -158,7 +158,7 @@ Transient: 0.742  L/R: -0.154
 ## Gunshot Monitor (Milestone 5)
 
 `gunshot_monitor` reads live audio, runs STFT + feature extraction, then feeds the
-rule-based `GunshotEventDetector` to print live score/state/event summaries.
+multi-stage `GunshotEventDetector` to print live score/state/event summaries.
 
 **Executable path:**
 ```
@@ -199,9 +199,13 @@ detection chain:
 It visualizes:
 
 - Detector status (`Idle / InCandidate / Cooldown / Triggered`)
-- Rolling score curve + trigger threshold line
+- Rolling candidate score curve + trigger threshold line
 - Feature curves (`Energy`, `Energy Rise`, `Transient Score`, `HF Energy Ratio`, `Spectral Flux`)
-- Event timeline markers with peak scores
+- Event timeline markers with stage colors:
+  - `Peak` (yellow)
+  - `Accepted` (green)
+  - `Rejected` (gray)
+  - `False Positive` (orange)
 
 **Executable path (Windows):**
 ```
@@ -225,6 +229,57 @@ gunshot_visualizer --device "CABLE Output"
 - `Trigger Threshold` (applies to detector immediately)
 - `Auto Scale`
 - `Display Window (s)` (5~10 seconds)
+
+---
+
+## Dataset Recorder (Milestone 6)
+
+`dataset_recorder` is a data-loop tool for offline analysis. It captures:
+
+`AudioCapture -> STFTProcessor -> FeatureExtractor -> GunshotEventDetector -> Dataset`
+
+For each detector candidate/accepted gunshot event, it stores a 400 ms window
+(200 ms pre + 200 ms post) as:
+
+- `audio.wav` (stereo PCM16)
+- `features.csv` (per-frame features)
+- `metadata.json` (capture + detector metadata)
+
+Current labeling policy:
+
+- Folders are pre-created under `dataset/`:
+  - `gunshot/`, `footstep/`, `reload/`, `switch/`, `ambient/`, `unknown/`
+- Recorder currently writes all auto-captured events to `dataset/unknown/<event_id>/`
+  for later manual labeling.
+
+**Executable path (Windows):**
+```
+.\build\tools\dataset_recorder\Release\dataset_recorder.exe
+```
+
+**Basic usage:**
+```bat
+REM Use default input device
+dataset_recorder
+
+REM List available input devices
+dataset_recorder --list-devices
+
+REM Capture from a named device
+dataset_recorder --device "CABLE Output"
+
+REM Use custom dataset root
+dataset_recorder --dataset-root "C:\data\echoradar_dataset"
+```
+
+**Recorder GUI highlights:**
+- Live statistics (`Total / Saved / Discarded / Disk Usage / Recording Time`)
+- Recent event list (last 10)
+- Waveform view for saved 400 ms clips
+- Spectrogram view for saved clips
+- Replay selected event
+- Manual ambient snapshot capture
+- Dataset manifest export (`dataset/manifest.csv`)
 
 ---
 
@@ -544,8 +599,8 @@ STFTProcessor (KissFFT, 1024-pt, Hann window)
 | 4 | FeatureExtractor | ✅ |
 | 5 | GunshotEventDetector | ✅ |
 | 5.5 | Gunshot Visualizer (Debug Dashboard) | ✅ |
-| 6 | FootstepDetector | 🔲 |
-| 7 | Dataset Recorder Tool | 🔲 |
+| 6 | Dataset Pipeline + Recorder Tool | ✅ |
+| 7 | FootstepDetector | 🔲 |
 | 8 | KNNDirectionEstimator | 🔲 |
 | 9 | DirectionTracker | 🔲 |
 | 10 | OverlayRenderer | 🔲 |

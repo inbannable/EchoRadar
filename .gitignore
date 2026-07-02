@@ -31,6 +31,8 @@ _deps/
 # Datasets (may be large)
 datasets/*.wav
 datasets/*.bin
+dataset/**
+!dataset/.gitkeep
 
 # Model files
 model.bin

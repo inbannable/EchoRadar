@@ -1,3 +1,5 @@
+#include "DatasetStudioPanel.h"
+
 #include <audio/AudioCapture.h>
 #include <audio/AudioDeviceManager.h>
 #include <detector/GunshotEventDetector.h>
@@ -100,6 +102,8 @@ private:
 struct EventMarker {
     double peakTimeSec{0.0};
     float peakScore{0.0f};
+    float confidence{0.0f};
+    CandidateDecisionType type{CandidateDecisionType::Peak};
 };
 
 struct SharedDashboardData {
@@ -118,6 +122,7 @@ struct SharedDashboardData {
 
     DetectorState state{DetectorState::Idle};
     float currentScore{0.0f};
+    float currentConfidence{0.0f};
     float currentThreshold{EventDetectorConfig{}.triggerThreshold};
     float releaseThreshold{EventDetectorConfig{}.releaseThreshold};
     uint64_t eventCount{0};
@@ -144,6 +149,7 @@ struct SharedDashboardData {
 struct DashboardSnapshot {
     DetectorState state{DetectorState::Idle};
     float currentScore{0.0f};
+    float currentConfidence{0.0f};
     float currentThreshold{0.0f};
     float releaseThreshold{0.0f};
     uint64_t eventCount{0};
@@ -172,6 +178,7 @@ DashboardSnapshot BuildSnapshot(const SharedDashboardData& shared) {
 
     snap.state = shared.state;
     snap.currentScore = shared.currentScore;
+    snap.currentConfidence = shared.currentConfidence;
     snap.currentThreshold = shared.currentThreshold;
     snap.releaseThreshold = shared.releaseThreshold;
     snap.eventCount = shared.eventCount;
@@ -418,6 +425,36 @@ ImVec4 DetectorStateColor(DetectorState state, bool triggered) {
     return ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 }
 
+ImU32 MarkerColor(CandidateDecisionType type) {
+    switch (type) {
+    case CandidateDecisionType::Peak:
+        return IM_COL32(255, 220, 80, 255);   // yellow
+    case CandidateDecisionType::Accepted:
+        return IM_COL32(90, 230, 120, 255);   // green
+    case CandidateDecisionType::RejectedFalsePositive:
+        return IM_COL32(255, 125, 80, 255);   // orange
+    case CandidateDecisionType::RejectedTemporal:
+    case CandidateDecisionType::RejectedConfidence:
+        return IM_COL32(150, 150, 150, 255);  // gray
+    }
+    return IM_COL32(200, 200, 200, 255);
+}
+
+float MarkerYOffset(CandidateDecisionType type) {
+    switch (type) {
+    case CandidateDecisionType::Peak:
+        return -20.0f;
+    case CandidateDecisionType::Accepted:
+        return 20.0f;
+    case CandidateDecisionType::RejectedFalsePositive:
+        return 8.0f;
+    case CandidateDecisionType::RejectedTemporal:
+    case CandidateDecisionType::RejectedConfidence:
+        return -6.0f;
+    }
+    return 0.0f;
+}
+
 void RenderSeriesPlot(const char* label,
                       const std::vector<float>& series,
                       bool autoScale,
@@ -481,6 +518,14 @@ void RenderScorePlot(const std::vector<float>& score,
 
 void RenderEventTimeline(const DashboardSnapshot& snapshot, float windowSec) {
     ImGui::SeparatorText("Event Timeline");
+    ImGui::TextColored(ImVec4(1.00f, 0.86f, 0.30f, 1.00f), "Peak");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.35f, 0.92f, 0.45f, 1.00f), "Accepted");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.30f, 1.00f), "False Positive");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.68f, 0.68f, 0.68f, 1.00f), "Rejected");
+
     const ImVec2 canvasSize(ImGui::GetContentRegionAvail().x, 90.0f);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("timeline_canvas", canvasSize);
@@ -503,11 +548,13 @@ void RenderEventTimeline(const DashboardSnapshot& snapshot, float windowSec) {
         }
         const float t = static_cast<float>((marker.peakTimeSec - tStart) / windowSec);
         const float x = left + t * (right - left);
-        draw->AddLine(ImVec2(x, centerY - 22.0f), ImVec2(x, centerY + 22.0f), IM_COL32(255, 90, 90, 255), 2.0f);
-
+        const ImU32 color = MarkerColor(marker.type);
+        const float y = centerY + MarkerYOffset(marker.type);
+        draw->AddCircleFilled(ImVec2(x, y), 4.5f, color);
+        draw->AddLine(ImVec2(x, centerY - 6.0f), ImVec2(x, y), color, 1.4f);
         char label[16];
         std::snprintf(label, sizeof(label), "%.2f", marker.peakScore);
-        draw->AddText(ImVec2(x + 2.0f, centerY - 34.0f), IM_COL32(255, 190, 120, 255), label);
+        draw->AddText(ImVec2(x + 2.0f, y - 18.0f), color, label);
     }
 
     char startLabel[32];
@@ -545,7 +592,7 @@ int main(int argc, char* argv[]) {
     AudioCapture capture;
     bool started = false;
 
-    std::printf("[EchoRadar Gunshot Visualizer]\n");
+    std::printf("[EchoRadar Dataset Studio]\n");
     if (!deviceArg.empty()) {
         const auto found = deviceManager.FindInputDeviceByName(deviceArg);
         if (found) {
@@ -602,6 +649,7 @@ int main(int argc, char* argv[]) {
                 std::lock_guard<std::mutex> lock(shared.mutex);
                 shared.state = detector.GetState();
                 shared.currentScore = detector.GetLastScore();
+                shared.currentConfidence = detector.GetLastConfidence();
                 shared.currentThreshold = detector.GetTriggerThreshold();
                 shared.releaseThreshold = detector.GetReleaseThreshold();
                 shared.currentTimeSec = frameTimeSec;
@@ -617,14 +665,15 @@ int main(int argc, char* argv[]) {
                 shared.fluxHistory.Push(features.spectralFlux);
             }
 
-            GunshotEvent ev;
-            while (detector.PopEvent(ev)) {
+            CandidateDecision decision;
+            while (detector.PopDecision(decision)) {
                 didWork = true;
                 std::lock_guard<std::mutex> lock(shared.mutex);
-                ++shared.eventCount;
-                shared.lastEvent = ev;
-                shared.highlightUntil = std::chrono::steady_clock::now() + kEventHighlightDuration;
-                shared.eventMarkers.push_back(EventMarker{ev.peakTimeSec, ev.candidateScore});
+                shared.eventMarkers.push_back(EventMarker{
+                    decision.timeSec,
+                    decision.candidateScore,
+                    decision.confidence,
+                    decision.type});
 
                 const double keepTimeSec = 30.0;
                 const double currentTime = shared.currentTimeSec;
@@ -632,9 +681,18 @@ int main(int argc, char* argv[]) {
                        (currentTime - shared.eventMarkers.front().peakTimeSec) > keepTimeSec) {
                     shared.eventMarkers.pop_front();
                 }
-                while (shared.eventMarkers.size() > 512) {
+                while (shared.eventMarkers.size() > 1024) {
                     shared.eventMarkers.pop_front();
                 }
+            }
+
+            GunshotEvent ev;
+            while (detector.PopEvent(ev)) {
+                didWork = true;
+                std::lock_guard<std::mutex> lock(shared.mutex);
+                ++shared.eventCount;
+                shared.lastEvent = ev;
+                shared.highlightUntil = std::chrono::steady_clock::now() + kEventHighlightDuration;
             }
 
             {
@@ -658,7 +716,7 @@ int main(int argc, char* argv[]) {
     ::RegisterClassExW(&wc);
 
     HWND hwnd = ::CreateWindowW(wc.lpszClassName,
-                                L"EchoRadar - Gunshot Detection Visualizer",
+                                L"EchoRadar - Dataset Studio",
                                 WS_OVERLAPPEDWINDOW,
                                 100,
                                 100,
@@ -691,6 +749,7 @@ int main(int argc, char* argv[]) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
+    DatasetStudioPanel studio("dataset");
     float displayWindowSec = kDefaultTimeWindowSec;
     bool done = false;
     while (!done && g_running.load(std::memory_order_relaxed)) {
@@ -745,6 +804,7 @@ int main(int argc, char* argv[]) {
         ImGui::TextColored(stateColor, "%s", triggered ? "Triggered" : StateToString(snapshot.state));
 
         ImGui::Text("Current Score: %.3f", snapshot.currentScore);
+        ImGui::Text("Current Confidence: %.3f", snapshot.currentConfidence);
         ImGui::Text("Current Threshold: %.3f", snapshot.currentThreshold);
         ImGui::Text("Detected: %s", triggered ? "YES" : "NO");
         ImGui::Text("Events: %llu", static_cast<unsigned long long>(snapshot.eventCount));
@@ -792,6 +852,7 @@ int main(int argc, char* argv[]) {
         RenderEventTimeline(snapshot, displayWindowSec);
 
         ImGui::End();
+        studio.Render();
 
         ImGui::Render();
         const float clearColor[4] = {0.06f, 0.07f, 0.09f, 1.00f};
