@@ -1,93 +1,92 @@
-# Milestone 5: GunshotEventDetector
+# Milestone 5: Multi-stage GunshotEventDetector
 
 ## Overview
 
-Milestone 5 adds a rule-based, event-level gunshot detector that consumes per-frame
-`AudioFeatures` and emits `GunshotEvent` objects.
+`GunshotEventDetector` has been upgraded from a single threshold state machine into a
+multi-stage pipeline:
 
-Pipeline:
+`AudioFeatures -> Candidate Score -> Peak Picking -> Temporal Validation -> False Positive Filter -> Confidence Gate -> GunshotEvent`
 
-`AudioCapture -> AudioRingBuffer -> STFTProcessor -> FeatureExtractor -> GunshotEventDetector`
+`FeatureExtractor` remains unchanged.
 
-## Feature dependencies
+## Stage 1: Candidate score
 
-The detector uses these `AudioFeatures` fields:
+Each frame gets a high-recall candidate score from:
 
-- `logEnergy`
 - `energyRise`
 - `spectralFlux`
 - `hfEnergyRatio`
 - `transientScore`
-- `leftRightBalance`
-- `spectralCentroid`
-- `spectralFlatness`
+- a small centroid lift term
 
-`FeatureExtractor` computes the frame-to-frame state needed for `energyRise`,
-`spectralFlux`, and the transient baseline.
+The raw score is normalized with EMA baselines (`score` + `logEnergy`) so stable
+background audio does not keep firing candidates.
 
-## Candidate score
+## Stage 2: Peak picking
 
-The detector computes a frame score with a simple weighted rule:
+Only local maxima can become candidates:
 
-`score = f(energyRise, spectralFlux, hfEnergyRatio, transientScore)`
+- local rule: `mid >= left && mid >= right && (mid > left || mid > right)`
+- minimum trigger: `mid >= triggerThreshold`
+- adjacent plateau maxima are merged to one pending peak
 
-Implementation notes:
+This avoids repeated triggers during sustained high scores.
 
-- Each input feature is clamped to a stable range.
-- A small EMA baseline is maintained for score normalization.
-- `logEnergy` is used as a soft gate so steady background noise does not keep
-  retriggering candidates.
+## Stage 3: Temporal validation
 
-## State machine
+For each peak, detector builds a local event envelope and validates:
 
-The detector uses three states:
+- total duration (`minEventFrames .. maxEventFrames`)
+- rise duration (`maxRiseFrames`)
+- decay duration (`maxDecayFrames`)
+- peak width (`maxPeakWidthFrames`)
+- prominence / rise slope / decay slope
 
-- `Idle`
-- `InCandidate`
-- `Cooldown`
+Slow, wide, long events are rejected before classification.
 
-### Idle
+## Stage 4: False positive filter
 
-Waits for `score >= triggerThreshold`.
+Candidate peaks are checked with multi-feature rules (not single-feature):
 
-### InCandidate
+- energy rise
+- spectral flux
+- transient score
+- high-frequency ratio
+- spectral centroid
+- spectral flatness
+- duration / width context from temporal stage
 
-Tracks:
+Footstep-like / handling-like / broad-noise-like patterns are filtered out.
 
-- `startFrame`
-- `peakFrame`
-- `endFrame`
-- peak score and peak-frame auxiliary features
+## Stage 5: Confidence gate
 
-The candidate stays open while the score remains above `releaseThreshold`.
-Short dips are merged using `maxMergeGapFrames`.
+Accepted candidates get `confidence` in `[0, 1]` from:
 
-### Cooldown
+- candidate peak score
+- impulse features (`energyRise`, `flux`, `transient`, `hf`)
+- spectral cues (`centroid`, `flatness`)
+- temporal compactness and peak sharpness
 
-Suppresses immediate retriggers for `refractoryFrames`.
+Only candidates with `confidence >= minConfidence` emit `GunshotEvent`.
 
-## Merge / cooldown behavior
+## Event splitting for burst fire
 
-Nearby bursts are merged by allowing a short gap below release before finalizing
-the event. This prevents one gunshot from being split across adjacent STFT frames.
+Burst shots (AK/M4) are split by design using:
 
-After finalization, the detector enters cooldown so the same shot does not fire
-multiple events.
+- local-peak-only candidate generation
+- `minPeakIntervalFrames`
+- `minEventSeparationFrames`
 
-## Limitations
+So repeated peaks in one high-energy region can still become separate events.
 
-- It is a baseline rule-based detector, not a learned classifier.
-- Loud non-gunshot transients may still trigger it.
-- Footsteps, explosions, and unusual environmental sounds can cause false positives.
-- Performance depends on the quality of the upstream feature extraction and audio mix.
+## Debug output
 
-## Next step
+Detector exposes per-candidate decisions:
 
-Milestone 6 will use completed gunshot events to extract spatial cues for direction
-estimation, such as:
+- `Peak`
+- `RejectedTemporal`
+- `RejectedFalsePositive`
+- `RejectedConfidence`
+- `Accepted`
 
-- event-window isolation
-- ILD
-- GCC-PHAT / coherence
-
-The detector itself stays focused on event detection only.
+This is consumed by the visualizer for stage-by-stage explanation.

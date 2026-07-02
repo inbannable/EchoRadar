@@ -1,12 +1,15 @@
 add_executable(echoradar_tests
     test_ring_buffer.cpp
     test_audio_ring_buffer.cpp
+    test_audio_history_buffer.cpp
     test_stft.cpp
     test_detectors.cpp
     test_gunshot_event_detector.cpp
     test_features.cpp
+    test_feature_history_buffer.cpp
     test_localization.cpp
     test_tracking.cpp
+    test_dataset_manager.cpp
 )
 target_link_libraries(echoradar_tests
     PRIVATE
@@ -17,6 +20,7 @@ target_link_libraries(echoradar_tests
         echoradar_features
         echoradar_localization
         echoradar_tracking
+        echoradar_dataset
         GTest::gtest_main
 )
 include(GoogleTest)
