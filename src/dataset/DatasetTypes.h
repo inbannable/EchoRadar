@@ -48,6 +48,8 @@ struct DatasetEventRecord {
     std::string jsonPath;
 
     std::string eventType;       // "candidate" / "gunshot" / "ambient"
+    std::string decision;        // detector decision that finalized this clip
+    std::string sessionId;       // recorder session that produced this clip
     std::string deviceName;
     std::string notes;
 
@@ -63,6 +65,7 @@ struct DatasetEventRecord {
     float candidateScore{0.0f};
     float confidence{0.0f};
     float triggerThreshold{0.0f};
+    bool reviewed{false};
 
     // Lazily-computed quality-check fields (populated on demand by
     // DatasetManager::RunQualityScan, not by Scan()).

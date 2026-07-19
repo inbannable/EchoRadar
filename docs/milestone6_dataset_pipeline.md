@@ -14,14 +14,19 @@ Milestone 6 focuses on building the data loop, not improving detector logic:
 
 Recorder stages:
 
-1. Capture detector decisions (`Peak`, `Accepted`)
+1. Capture each detector peak and attach its final accepted/rejected decision
 2. Wait for full 200 ms post context
 3. Pull 400 ms PCM window from `AudioHistoryBuffer` (200 ms pre + 200 ms post)
 4. Pull matching feature rows from `FeatureHistoryBuffer`
-5. Persist asynchronously to disk as:
+5. Persist asynchronously into a private staging directory as:
    - `audio.wav`
    - `features.csv`
    - `metadata.json`
+6. Atomically publish the complete event directory
+
+Recorder sessions use collision-resistant event IDs and never overwrite an
+existing event. Failed writes are removed from the staging area instead of
+leaving partial dataset entries.
 
 ## New core components
 
@@ -48,6 +53,10 @@ Current auto-save target:
 
 `dataset/unknown/<event_id>/audio.wav|features.csv|metadata.json`
 
+Each physical detector candidate produces one clip. `metadata.json` records
+the final detector decision, recorder session, wall-clock timestamp, and human
+review status. Manifest export covers all six labels, not only `unknown`.
+
 ## Recorder UI
 
 - Live statistics:
@@ -62,3 +71,14 @@ Current auto-save target:
 - Replay selected event
 - Manual ambient snapshot
 - Manifest export (`dataset/manifest.csv`)
+
+## Dataset Studio review flow
+
+- Unreviewed clips are shown by default
+- Keys `1` through `6` label/review the current selection
+- Auto-advance can select and optionally play the next clip
+- Review state is independent from the label, so a clip may remain `unknown`
+  while still being marked as reviewed
+- Manifest export, soft delete, restore, and undo route through `DatasetManager`
+- Recorder and Dataset Studio both accept `--dataset-root <path>` so capture and
+  review can share a non-default dataset location

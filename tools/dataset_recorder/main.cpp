@@ -1,6 +1,7 @@
 #include <audio/AudioCapture.h>
 #include <audio/AudioDeviceManager.h>
 #include <audio/AudioHistoryBuffer.h>
+#include <dataset/DatasetManager.h>
 #include <detector/GunshotEventDetector.h>
 #include <dsp/STFTProcessor.h>
 #include <features/FeatureExtractor.h>
@@ -20,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -69,8 +71,9 @@ std::string JsonEscape(const std::string& value) {
 struct DatasetRecord {
     std::string eventId;
     std::string eventType; // candidate / gunshot / ambient
-    std::string datasetRoot;
     std::string labelFolder; // currently unknown
+    std::string decision;
+    std::string sessionId;
     std::string deviceName;
     uint64_t timestampMs{0};
     uint32_t sampleRate{48000};
@@ -88,6 +91,7 @@ struct DatasetRecord {
 struct CompletedEvent {
     std::string eventId;
     std::string eventType;
+    std::string decision;
     std::string folderPath;
     std::string audioPath;
     std::string csvPath;
@@ -96,6 +100,7 @@ struct CompletedEvent {
     float candidateScore{0.0f};
     float confidence{0.0f};
     bool writeOk{false};
+    std::string errorMessage;
     size_t bytesWritten{0};
 
     std::vector<float> waveformLeft;
@@ -202,6 +207,8 @@ bool WriteMetadataJson(const fs::path& path, const DatasetRecord& record) {
     out << "{\n";
     out << "  \"event_id\": \"" << JsonEscape(record.eventId) << "\",\n";
     out << "  \"event_type\": \"" << JsonEscape(record.eventType) << "\",\n";
+    out << "  \"decision\": \"" << JsonEscape(record.decision) << "\",\n";
+    out << "  \"session_id\": \"" << JsonEscape(record.sessionId) << "\",\n";
     out << "  \"label\": \"" << JsonEscape(record.labelFolder) << "\",\n";
     out << "  \"timestamp_ms\": " << record.timestampMs << ",\n";
     out << "  \"sample_rate\": " << record.sampleRate << ",\n";
@@ -214,6 +221,7 @@ bool WriteMetadataJson(const fs::path& path, const DatasetRecord& record) {
     out << "  \"candidate_score\": " << record.candidateScore << ",\n";
     out << "  \"confidence\": " << record.confidence << ",\n";
     out << "  \"trigger_threshold\": " << record.triggerThreshold << ",\n";
+    out << "  \"reviewed\": false,\n";
     out << "  \"device_name\": \"" << JsonEscape(record.deviceName) << "\"\n";
     out << "}\n";
     return out.good();
@@ -232,45 +240,11 @@ size_t FolderSizeBytes(const fs::path& root) {
     return total;
 }
 
-void EnsureDatasetFolders(const fs::path& root) {
-    fs::create_directories(root / "gunshot");
-    fs::create_directories(root / "footstep");
-    fs::create_directories(root / "reload");
-    fs::create_directories(root / "switch");
-    fs::create_directories(root / "ambient");
-    fs::create_directories(root / "unknown");
-}
-
-bool WriteDatasetManifest(const fs::path& root) {
-    std::ofstream out(root / "manifest.csv");
-    if (!out) {
-        return false;
-    }
-    out << "label,event_id,event_type,audio_path,csv_path,json_path\n";
-
-    const fs::path unknownRoot = root / "unknown";
-    if (!fs::exists(unknownRoot)) {
-        return out.good();
-    }
-
-    for (const auto& entry : fs::directory_iterator(unknownRoot)) {
-        if (!entry.is_directory()) {
-            continue;
-        }
-        const fs::path dir = entry.path();
-        const std::string id = dir.filename().string();
-        out << "unknown," << id << ",,"
-            << (dir / "audio.wav").string() << ','
-            << (dir / "features.csv").string() << ','
-            << (dir / "metadata.json").string() << '\n';
-    }
-    return out.good();
-}
-
 CompletedEvent BuildPreviewFromRecord(const DatasetRecord& record) {
     CompletedEvent preview{};
     preview.eventId = record.eventId;
     preview.eventType = record.eventType;
+    preview.decision = record.decision;
     preview.timestampMs = record.timestampMs;
     preview.candidateScore = record.candidateScore;
     preview.confidence = record.confidence;
@@ -319,7 +293,8 @@ CompletedEvent BuildPreviewFromRecord(const DatasetRecord& record) {
 
 class AsyncDatasetWriter {
 public:
-    AsyncDatasetWriter() {
+    explicit AsyncDatasetWriter(std::string datasetRoot)
+        : m_datasetManager(std::move(datasetRoot)) {
         m_worker = std::thread([this]() { WorkerLoop(); });
     }
 
@@ -371,19 +346,37 @@ private:
                 m_requests.pop();
             }
 
+            record.eventId = m_datasetManager.GenerateUniqueEventId();
             CompletedEvent result = BuildPreviewFromRecord(record);
-            const fs::path eventDir = fs::path(record.datasetRoot) / record.labelFolder / record.eventId;
-            fs::create_directories(eventDir);
+            if (record.eventId.empty()) {
+                result.writeOk = false;
+                result.errorMessage = "Could not allocate a unique event id";
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_completed.push(std::move(result));
+                continue;
+            }
+
+            const fs::path eventDir = fs::path(m_datasetManager.Root()) / record.labelFolder / record.eventId;
+            const DatasetOpResult publishResult = m_datasetManager.PublishEvent(
+                record.eventId,
+                LabelFromString(record.labelFolder),
+                [&](const fs::path& stagingDir) {
+                    const bool wavOk = WriteWavPcm16(stagingDir / "audio.wav",
+                                                     record.audioInterleaved,
+                                                     record.sampleRate);
+                    const bool csvOk = WriteFeaturesCsv(stagingDir / "features.csv", record.features);
+                    const bool jsonOk = WriteMetadataJson(stagingDir / "metadata.json", record);
+                    if (!wavOk || !csvOk || !jsonOk) {
+                        return DatasetOpResult::Failure("Failed to write one or more event files");
+                    }
+                    return DatasetOpResult::Success();
+                });
 
             const fs::path audioPath = eventDir / "audio.wav";
             const fs::path csvPath = eventDir / "features.csv";
             const fs::path jsonPath = eventDir / "metadata.json";
-
-            const bool wavOk = WriteWavPcm16(audioPath, record.audioInterleaved, record.sampleRate);
-            const bool csvOk = WriteFeaturesCsv(csvPath, record.features);
-            const bool jsonOk = WriteMetadataJson(jsonPath, record);
-
-            result.writeOk = wavOk && csvOk && jsonOk;
+            result.writeOk = publishResult.ok;
+            result.errorMessage = publishResult.ok ? std::string{} : publishResult.message;
             result.folderPath = eventDir.string();
             result.audioPath = audioPath.string();
             result.csvPath = csvPath.string();
@@ -402,6 +395,7 @@ private:
         }
     }
 
+    DatasetManager m_datasetManager;
     mutable std::mutex m_mutex;
     std::condition_variable m_cv;
     std::queue<DatasetRecord> m_requests;
@@ -412,6 +406,7 @@ private:
 
 struct PendingCapture {
     std::string eventType;
+    std::string decision;
     double timeSec{0.0};
     int frameIndex{0};
     float candidateScore{0.0f};
@@ -420,6 +415,17 @@ struct PendingCapture {
     float triggerThreshold{0.0f};
     double readyTimeSec{0.0};
 };
+
+const char* DecisionToString(CandidateDecisionType type) {
+    switch (type) {
+    case CandidateDecisionType::Peak: return "peak";
+    case CandidateDecisionType::RejectedTemporal: return "rejected_temporal";
+    case CandidateDecisionType::RejectedFalsePositive: return "rejected_false_positive";
+    case CandidateDecisionType::RejectedConfidence: return "rejected_confidence";
+    case CandidateDecisionType::Accepted: return "accepted";
+    }
+    return "unknown";
+}
 
 const char* StateToString(DetectorState state) {
     switch (state) {
@@ -729,7 +735,11 @@ int main(int argc, char* argv[]) {
     }
 
     const fs::path datasetRoot = fs::path(datasetRootArg);
-    EnsureDatasetFolders(datasetRoot);
+    DatasetManager datasetManager(datasetRoot.string());
+    const uint64_t sessionStartUtcMs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    const std::string sessionId = "session_" + std::to_string(sessionStartUtcMs);
 
     AudioCapture capture;
     bool started = false;
@@ -755,7 +765,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    AsyncDatasetWriter writer;
+    AsyncDatasetWriter writer(datasetRoot.string());
     SharedState shared{};
     {
         std::lock_guard<std::mutex> lock(shared.mutex);
@@ -763,7 +773,6 @@ int main(int argc, char* argv[]) {
     }
 
     std::atomic<bool> requestAmbientSnapshot{false};
-    std::atomic<uint64_t> eventCounter{0};
     const auto recordingStart = std::chrono::steady_clock::now();
 
     std::thread dspThread([&]() {
@@ -811,6 +820,7 @@ int main(int argc, char* argv[]) {
                 if (requestAmbientSnapshot.exchange(false, std::memory_order_acq_rel)) {
                     PendingCapture ambient{};
                     ambient.eventType = "ambient";
+                    ambient.decision = "manual_ambient";
                     ambient.timeSec = frameTimeSec;
                     ambient.frameIndex = static_cast<int>(frame.frame_index);
                     ambient.candidateScore = detector.GetLastScore();
@@ -838,23 +848,48 @@ int main(int argc, char* argv[]) {
             CandidateDecision decision{};
             while (detector.PopDecision(decision)) {
                 didWork = true;
-                if (decision.type != CandidateDecisionType::Peak &&
-                    decision.type != CandidateDecisionType::Accepted) {
+                auto existing = std::find_if(pending.begin(), pending.end(), [&](const PendingCapture& item) {
+                    return item.frameIndex == decision.frameIndex;
+                });
+
+                if (decision.type == CandidateDecisionType::Peak) {
+                    if (existing == pending.end()) {
+                        PendingCapture item{};
+                        item.eventType = "candidate";
+                        item.decision = DecisionToString(decision.type);
+                        item.timeSec = decision.timeSec;
+                        item.frameIndex = decision.frameIndex;
+                        item.candidateScore = decision.candidateScore;
+                        item.confidence = decision.confidence;
+                        item.detectorScore = decision.candidateScore;
+                        item.triggerThreshold = detector.GetTriggerThreshold();
+                        item.readyTimeSec = decision.timeSec + kPostEventSeconds;
+                        pending.push_back(item);
+
+                        std::lock_guard<std::mutex> lock(shared.mutex);
+                        ++shared.totalEvents;
+                    }
                     continue;
                 }
-                PendingCapture item{};
-                item.eventType = (decision.type == CandidateDecisionType::Accepted) ? "gunshot" : "candidate";
-                item.timeSec = decision.timeSec;
-                item.frameIndex = decision.frameIndex;
-                item.candidateScore = decision.candidateScore;
-                item.confidence = decision.confidence;
-                item.detectorScore = detector.GetLastScore();
-                item.triggerThreshold = detector.GetTriggerThreshold();
-                item.readyTimeSec = decision.timeSec + kPostEventSeconds;
-                pending.push_back(item);
 
-                std::lock_guard<std::mutex> lock(shared.mutex);
-                ++shared.totalEvents;
+                if (existing == pending.end()) {
+                    PendingCapture item{};
+                    item.timeSec = decision.timeSec;
+                    item.frameIndex = decision.frameIndex;
+                    item.readyTimeSec = decision.timeSec + kPostEventSeconds;
+                    pending.push_back(item);
+                    existing = std::prev(pending.end());
+
+                    std::lock_guard<std::mutex> lock(shared.mutex);
+                    ++shared.totalEvents;
+                }
+
+                existing->eventType = decision.type == CandidateDecisionType::Accepted ? "gunshot" : "candidate";
+                existing->decision = DecisionToString(decision.type);
+                existing->candidateScore = decision.candidateScore;
+                existing->confidence = decision.confidence;
+                existing->detectorScore = decision.candidateScore;
+                existing->triggerThreshold = detector.GetTriggerThreshold();
             }
 
             GunshotEvent ev{};
@@ -882,17 +917,14 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
 
-                const uint64_t seq = eventCounter.fetch_add(1, std::memory_order_relaxed) + 1;
-                char idBuf[32];
-                std::snprintf(idBuf, sizeof(idBuf), "%06llu", static_cast<unsigned long long>(seq));
-
                 DatasetRecord record{};
-                record.eventId = idBuf;
                 record.eventType = item.eventType;
-                record.datasetRoot = datasetRoot.string();
                 record.labelFolder = "unknown";
+                record.decision = item.decision.empty() ? "peak" : item.decision;
+                record.sessionId = sessionId;
                 record.deviceName = selectedDeviceName;
-                record.timestampMs = static_cast<uint64_t>(std::llround(item.timeSec * 1000.0));
+                record.timestampMs = sessionStartUtcMs +
+                    static_cast<uint64_t>(std::llround(item.timeSec * 1000.0));
                 record.sampleRate = 48000;
                 record.fftSize = fftSize;
                 record.hopSize = hopSize;
@@ -1030,6 +1062,7 @@ int main(int argc, char* argv[]) {
         ImGui::Text("Current Confidence: %.3f", snapshot.currentConfidence);
         ImGui::Text("Threshold: trigger=%.3f release=%.3f", snapshot.triggerThreshold, snapshot.releaseThreshold);
         ImGui::Text("Recording Time: %.1f s", recordingSec);
+        ImGui::Text("Session: %s", sessionId.c_str());
 
         ImGui::SeparatorText("Statistics");
         ImGui::Text("Total Events: %llu", static_cast<unsigned long long>(snapshot.totalEvents));
@@ -1044,9 +1077,9 @@ int main(int argc, char* argv[]) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Export Manifest")) {
-            const bool ok = WriteDatasetManifest(datasetRoot);
+            const DatasetOpResult exportResult = datasetManager.ExportManifest();
             std::lock_guard<std::mutex> lock(shared.mutex);
-            shared.exportOk = ok;
+            shared.exportOk = exportResult.ok;
         }
         ImGui::SameLine();
         if (ImGui::Button("Open Dataset Folder")) {
@@ -1064,6 +1097,7 @@ int main(int argc, char* argv[]) {
         for (const auto& ev : snapshot.recentEvents) {
             std::ostringstream oss;
             oss << ev.eventId << " [" << ev.eventType << "]"
+                << " " << ev.decision
                 << " score=" << std::fixed << std::setprecision(2) << ev.candidateScore
                 << " conf=" << std::fixed << std::setprecision(2) << ev.confidence;
             ownedLabels.push_back(oss.str());
@@ -1093,6 +1127,7 @@ int main(int argc, char* argv[]) {
         }
 
         if (hasSelected) {
+            if (!selectedEvent.writeOk) ImGui::BeginDisabled();
             if (ImGui::Button("Replay Selected")) {
                 PlaySoundA(selectedEvent.audioPath.c_str(), nullptr, SND_FILENAME | SND_ASYNC);
             }
@@ -1104,13 +1139,20 @@ int main(int argc, char* argv[]) {
             if (ImGui::Button("Open Event Folder")) {
                 ShellExecuteA(nullptr, "open", selectedEvent.folderPath.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
             }
+            if (!selectedEvent.writeOk) ImGui::EndDisabled();
 
             ImGui::Text("Selected Event: %s", selectedEvent.eventId.c_str());
             ImGui::Text("Type: %s", selectedEvent.eventType.c_str());
+            ImGui::Text("Decision: %s", selectedEvent.decision.c_str());
             ImGui::Text("Score=%.3f  Confidence=%.3f", selectedEvent.candidateScore, selectedEvent.confidence);
             ImGui::Text("Write Status: %s  Bytes=%zu",
                         selectedEvent.writeOk ? "OK" : "FAILED",
                         selectedEvent.bytesWritten);
+            if (!selectedEvent.errorMessage.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.35f, 1.0f),
+                                   "Error: %s",
+                                   selectedEvent.errorMessage.c_str());
+            }
 
             ImGui::SetNextItemWidth(260.0f);
             ImGui::SliderFloat("Display Window (s)", &displayWindowSec, kMinTimeWindowSec, kMaxTimeWindowSec, "%.2f");

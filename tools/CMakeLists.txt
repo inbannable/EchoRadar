@@ -1,4 +1,5 @@
 add_subdirectory(dataset_recorder)
+add_subdirectory(asset_inventory)
 add_subdirectory(audio_monitor)
 add_subdirectory(stft_monitor)
 add_subdirectory(feature_monitor)

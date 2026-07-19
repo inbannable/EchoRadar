@@ -33,6 +33,7 @@ datasets/*.wav
 datasets/*.bin
 dataset/**
 !dataset/.gitkeep
+pilot-datasets/**
 
 # Model files
 model.bin

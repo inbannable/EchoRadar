@@ -8,6 +8,7 @@ target_link_libraries(dataset_recorder
         echoradar_dsp
         echoradar_features
         echoradar_detector
+        echoradar_dataset
 )
 
 if(WIN32)

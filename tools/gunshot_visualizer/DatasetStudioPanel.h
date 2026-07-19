@@ -26,12 +26,15 @@ private:
     void SelectEvent(const std::string& id);
     void LoadPreviewForSelected();
     void ApplyLabelToSelection(EchoRadar::DatasetLabel label);
+    std::string FindNextReviewId(const std::vector<std::string>& selectedIds) const;
     void DeleteSelection();
     void RunUndo();
+    void ExportManifest();
     void HandleShortcuts();
     void PushReplay(const std::string& id);
     void PlaySelectedAudio();
-    void StopAudio();
+    void ReplaySelectedAudio();
+    bool StopAudio();
     void ToastStatus(const std::string& message, bool ok);
 
     void RenderToolbar();
@@ -56,6 +59,7 @@ private:
 
     std::string m_searchText;
     int m_labelFilterIndex{0}; // 0 = All, 1..6 = specific label
+    int m_reviewFilterIndex{1}; // 0 = All, 1 = Unreviewed, 2 = Reviewed
     float m_minConfidenceFilter{0.0f};
     float m_minScoreFilter{0.0f};
 
@@ -92,6 +96,8 @@ private:
     std::vector<std::string> m_qualityResults;
 
     bool m_confirmDeletePending{false};
+    bool m_autoAdvance{true};
+    bool m_autoPlayNext{false};
 
     std::string m_statusMessage;
     bool m_statusOk{true};

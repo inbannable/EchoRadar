@@ -1,4 +1,6 @@
 add_library(echoradar_dataset STATIC
+    AssetInventory.h
+    AssetInventory.cpp
     DatasetTypes.h
     DatasetJson.h
     DatasetWavStats.h

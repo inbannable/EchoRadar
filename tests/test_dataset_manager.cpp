@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -49,6 +51,8 @@ void WriteMetadata(const fs::path& path, const std::string& label, const std::st
     out << "{\n";
     out << "  \"event_id\": \"" << id << "\",\n";
     out << "  \"event_type\": \"candidate\",\n";
+    out << "  \"decision\": \"rejected_confidence\",\n";
+    out << "  \"session_id\": \"session_test\",\n";
     out << "  \"label\": \"" << label << "\",\n";
     out << "  \"timestamp_ms\": 1000,\n";
     out << "  \"sample_rate\": 48000,\n";
@@ -61,6 +65,7 @@ void WriteMetadata(const fs::path& path, const std::string& label, const std::st
     out << "  \"candidate_score\": 0.8,\n";
     out << "  \"confidence\": " << confidence << ",\n";
     out << "  \"trigger_threshold\": 0.56,\n";
+    out << "  \"reviewed\": false,\n";
     out << "  \"device_name\": \"Test Device\"\n";
     out << "}\n";
 }
@@ -111,6 +116,68 @@ TEST_F(DatasetManagerTest, ScanFindsAllEvents) {
     EXPECT_EQ(stats.at("gunshot"), 1u);
 }
 
+TEST_F(DatasetManagerTest, GeneratesDistinctRestartSafeEventIds) {
+    DatasetManager first(root.string());
+    const std::string id1 = first.GenerateUniqueEventId();
+    ASSERT_FALSE(id1.empty());
+
+    const auto publish = first.PublishEvent(id1, DatasetLabel::Unknown, [](const fs::path& staging) {
+        std::ofstream(staging / "audio.wav", std::ios::binary) << "audio";
+        std::ofstream(staging / "features.csv") << "feature\n";
+        std::ofstream(staging / "metadata.json") << "{}\n";
+        return DatasetOpResult::Success();
+    });
+    ASSERT_TRUE(publish.ok) << publish.message;
+
+    DatasetManager second(root.string());
+    const std::string id2 = second.GenerateUniqueEventId();
+    EXPECT_FALSE(id2.empty());
+    EXPECT_NE(id1, id2);
+}
+
+TEST_F(DatasetManagerTest, PublishEventMakesCompleteDirectoryVisibleAtOnce) {
+    DatasetManager mgr(root.string());
+    const std::string id = mgr.GenerateUniqueEventId();
+    const auto result = mgr.PublishEvent(id, DatasetLabel::Unknown, [](const fs::path& staging) {
+        std::ofstream(staging / "audio.wav", std::ios::binary) << "audio";
+        std::ofstream(staging / "features.csv") << "feature\n";
+        std::ofstream(staging / "metadata.json") << "{}\n";
+        return DatasetOpResult::Success();
+    });
+
+    ASSERT_TRUE(result.ok) << result.message;
+    const fs::path published = root / "unknown" / id;
+    EXPECT_TRUE(fs::exists(published / "audio.wav"));
+    EXPECT_TRUE(fs::exists(published / "features.csv"));
+    EXPECT_TRUE(fs::exists(published / "metadata.json"));
+    EXPECT_FALSE(fs::exists(root / ".pending" / (id + ".tmp")));
+}
+
+TEST_F(DatasetManagerTest, PublishEventCleansFailedStagingAndDoesNotPublish) {
+    DatasetManager mgr(root.string());
+    const std::string id = mgr.GenerateUniqueEventId();
+    const auto result = mgr.PublishEvent(id, DatasetLabel::Unknown, [](const fs::path& staging) {
+        std::ofstream(staging / "audio.wav", std::ios::binary) << "partial";
+        return DatasetOpResult::Failure("simulated write failure");
+    });
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(fs::exists(root / "unknown" / id));
+    EXPECT_FALSE(fs::exists(root / ".pending" / (id + ".tmp")));
+}
+
+TEST_F(DatasetManagerTest, PublishEventRefusesToOverwriteExistingEvent) {
+    CreateEvent(root, "gunshot", "existing");
+    DatasetManager mgr(root.string());
+    const auto result = mgr.PublishEvent("existing", DatasetLabel::Unknown, [](const fs::path&) {
+        return DatasetOpResult::Success();
+    });
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(fs::exists(root / "gunshot" / "existing" / "audio.wav"));
+    EXPECT_FALSE(fs::exists(root / "unknown" / "existing"));
+}
+
 TEST_F(DatasetManagerTest, MoveLabelMovesFolderAndUpdatesMetadata) {
     CreateEvent(root, "unknown", "000001");
     DatasetManager mgr(root.string());
@@ -125,6 +192,7 @@ TEST_F(DatasetManagerTest, MoveLabelMovesFolderAndUpdatesMetadata) {
     const auto ev = mgr.GetEvent("000001");
     ASSERT_TRUE(ev.has_value());
     EXPECT_EQ(ev->label, DatasetLabel::Gunshot);
+    EXPECT_TRUE(ev->reviewed);
 
     // Re-scanning should reflect the same state on disk.
     DatasetManager mgr2(root.string());
@@ -141,6 +209,21 @@ TEST_F(DatasetManagerTest, MoveLabelIsNoOpWhenSameLabel) {
     const auto result = mgr.MoveLabel("000001", DatasetLabel::Gunshot);
     EXPECT_TRUE(result.ok);
     EXPECT_TRUE(fs::exists(root / "gunshot" / "000001"));
+    ASSERT_TRUE(mgr.GetEvent("000001").has_value());
+    EXPECT_TRUE(mgr.GetEvent("000001")->reviewed);
+}
+
+TEST_F(DatasetManagerTest, UnknownCanBeReviewedAndUndoRestoresReviewStatus) {
+    CreateEvent(root, "unknown", "000001");
+    DatasetManager mgr(root.string());
+    mgr.Scan();
+
+    ASSERT_TRUE(mgr.MoveLabel("000001", DatasetLabel::Unknown).ok);
+    ASSERT_TRUE(mgr.GetEvent("000001").has_value());
+    EXPECT_TRUE(mgr.GetEvent("000001")->reviewed);
+
+    ASSERT_TRUE(mgr.Undo().ok);
+    EXPECT_FALSE(mgr.GetEvent("000001")->reviewed);
 }
 
 TEST_F(DatasetManagerTest, DeleteMovesToTrashAndRemovesFromIndex) {
@@ -153,6 +236,21 @@ TEST_F(DatasetManagerTest, DeleteMovesToTrashAndRemovesFromIndex) {
     EXPECT_FALSE(fs::exists(root / "unknown" / "000001"));
     EXPECT_TRUE(fs::exists(root / ".trash" / "000001"));
     EXPECT_FALSE(mgr.GetEvent("000001").has_value());
+}
+
+TEST_F(DatasetManagerTest, DeleteRefusesTrashCollisionWithoutRemovingEitherEvent) {
+    CreateEvent(root, "unknown", "000001", 4800, 0.2f);
+    CreateEvent(root, "ambient", "trash_source", 4800, 0.7f);
+    fs::create_directories(root / ".trash");
+    fs::rename(root / "ambient" / "trash_source", root / ".trash" / "000001");
+
+    DatasetManager mgr(root.string());
+    mgr.Scan();
+    const auto result = mgr.Delete("000001");
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(fs::exists(root / "unknown" / "000001" / "audio.wav"));
+    EXPECT_TRUE(fs::exists(root / ".trash" / "000001" / "audio.wav"));
 }
 
 TEST_F(DatasetManagerTest, RestoreBringsBackDeletedEvent) {
@@ -169,6 +267,19 @@ TEST_F(DatasetManagerTest, RestoreBringsBackDeletedEvent) {
     EXPECT_EQ(ev->label, DatasetLabel::Gunshot);
 }
 
+TEST_F(DatasetManagerTest, RestoreRefusesDestinationCollision) {
+    CreateEvent(root, "unknown", "000001", 4800, 0.2f);
+    DatasetManager mgr(root.string());
+    mgr.Scan();
+    ASSERT_TRUE(mgr.Delete("000001").ok);
+    CreateEvent(root, "unknown", "000001", 4800, 0.8f);
+
+    const auto result = mgr.Restore("000001");
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(fs::exists(root / ".trash" / "000001" / "audio.wav"));
+    EXPECT_TRUE(fs::exists(root / "unknown" / "000001" / "audio.wav"));
+}
+
 TEST_F(DatasetManagerTest, UndoRevertsMove) {
     CreateEvent(root, "unknown", "000001");
     DatasetManager mgr(root.string());
@@ -180,6 +291,7 @@ TEST_F(DatasetManagerTest, UndoRevertsMove) {
     EXPECT_TRUE(result.ok);
     EXPECT_TRUE(fs::exists(root / "unknown" / "000001"));
     EXPECT_FALSE(fs::exists(root / "footstep" / "000001"));
+    EXPECT_FALSE(mgr.GetEvent("000001")->reviewed);
 }
 
 TEST_F(DatasetManagerTest, UndoRevertsDelete) {
@@ -257,6 +369,25 @@ TEST_F(DatasetManagerTest, FindDuplicatesDetectsByteIdenticalAudio) {
     EXPECT_NE(std::find(dupes.begin(), dupes.end(), "000001"), dupes.end());
     EXPECT_NE(std::find(dupes.begin(), dupes.end(), "000002"), dupes.end());
     EXPECT_EQ(std::find(dupes.begin(), dupes.end(), "000003"), dupes.end());
+}
+
+TEST_F(DatasetManagerTest, ExportManifestIncludesEveryLabelAndReviewMetadata) {
+    CreateEvent(root, "unknown", "000001");
+    CreateEvent(root, "gunshot", "000002");
+    CreateEvent(root, "footstep", "000003");
+    DatasetManager mgr(root.string());
+
+    const auto result = mgr.ExportManifest();
+    ASSERT_TRUE(result.ok) << result.message;
+
+    std::ifstream in(root / "manifest.csv");
+    std::ostringstream contents;
+    contents << in.rdbuf();
+    const std::string csv = contents.str();
+    EXPECT_NE(csv.find("decision,session_id"), std::string::npos);
+    EXPECT_NE(csv.find("unknown,000001,candidate,rejected_confidence,session_test"), std::string::npos);
+    EXPECT_NE(csv.find("gunshot,000002,candidate,rejected_confidence,session_test"), std::string::npos);
+    EXPECT_NE(csv.find("footstep,000003,candidate,rejected_confidence,session_test"), std::string::npos);
 }
 
 } // namespace

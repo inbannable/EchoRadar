@@ -3,6 +3,8 @@
 #include "dataset/DatasetTypes.h"
 
 #include <deque>
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <map>
 #include <string>
@@ -40,6 +42,22 @@ public:
     // label -> count, always includes all six canonical labels (possibly 0).
     std::map<std::string, size_t> GetStatistics() const;
 
+    // Creates an ID that is safe to use across recorder restarts and checks it
+    // against every label, trash, and in-progress event directory.
+    std::string GenerateUniqueEventId() const;
+
+    // Publishes one complete event directory without exposing partial files.
+    // The callback writes audio.wav/features.csv/metadata.json into a private
+    // staging directory. That directory is renamed into place only on success.
+    using EventDirectoryWriter = std::function<DatasetOpResult(const std::filesystem::path&)>;
+    DatasetOpResult PublishEvent(const std::string& id,
+                                 DatasetLabel label,
+                                 const EventDirectoryWriter& writer);
+
+    // Writes a CSV index containing events from all canonical labels.
+    // Empty path defaults to <dataset root>/manifest.csv.
+    DatasetOpResult ExportManifest(const std::string& outputPath = "");
+
     // Moves dataset/<oldLabel>/<id> -> dataset/<newLabel>/<id>, rewrites the
     // "label" field inside metadata.json, and pushes an undo entry.
     DatasetOpResult MoveLabel(const std::string& id, DatasetLabel newLabel);
@@ -54,6 +72,9 @@ public:
 
     // Merges free-text notes into metadata.json (adds/updates "notes" key).
     DatasetOpResult UpdateNotes(const std::string& id, const std::string& notes);
+
+    // Marks an event as reviewed without forcing it out of the Unknown label.
+    DatasetOpResult SetReviewed(const std::string& id, bool reviewed = true);
 
     // Reverts the most recent Move/Delete/Notes operation. Keeps up to
     // kMaxUndoHistory entries.
@@ -73,20 +94,24 @@ public:
 
 private:
     struct UndoAction {
-        enum class Type { Move, Delete, Notes };
+        enum class Type { Move, Delete, Notes, Reviewed };
         Type type{Type::Move};
         std::string id;
         DatasetLabel fromLabel{DatasetLabel::Unknown};
         DatasetLabel toLabel{DatasetLabel::Unknown};
         std::string oldNotes;
+        bool oldReviewed{false};
     };
 
     void EnsureFolders() const;
+    bool EventIdExists(const std::string& id) const;
+    static bool IsSafeEventId(const std::string& id);
     void ComputeQualityIfNeeded(DatasetEventRecord& record);
     int FindIndex(const std::string& id) const;
     bool WriteMetadataField(const DatasetEventRecord& record, const std::string& key, const std::string& value, bool quoted);
-    bool RewriteLabelInMetadata(const std::string& jsonPath, const std::string& newLabel);
+    bool RewriteLabelInMetadata(const std::string& jsonPath, const std::string& newLabel, bool reviewed = true);
     bool RewriteNotesInMetadata(const std::string& jsonPath, const std::string& notes, std::string* oldNotes);
+    bool RewriteReviewedInMetadata(const std::string& jsonPath, bool reviewed);
     void PushUndo(UndoAction action);
 
     std::string m_root;

@@ -62,6 +62,12 @@ constexpr const char* kLabelFilterItems[] = {
     "Unknown",
 };
 
+constexpr const char* kReviewFilterItems[] = {
+    "All",
+    "Unreviewed",
+    "Reviewed",
+};
+
 std::string EscapeMciString(const std::string& path) {
     std::string out;
     out.reserve(path.size() + 4);
@@ -91,12 +97,29 @@ MciPlayerState& PlayerState() {
     return state;
 }
 
+bool CloseAudioPath() {
+    MciPlayerState& state = PlayerState();
+    if (!state.open) {
+        return true;
+    }
+
+    // MCI retains the WAV handle after playback is stopped. Close the alias so
+    // Windows can rename the event directory during labeling and deletion.
+    MciSend("stop " + state.alias);
+    if (!MciSend("close " + state.alias)) {
+        return false;
+    }
+
+    state.currentPath.clear();
+    state.open = false;
+    state.paused = false;
+    return true;
+}
+
 bool OpenAudioPath(const std::string& path) {
     MciPlayerState& state = PlayerState();
-    if (state.open) {
-        MciSend("close " + state.alias);
-        state.open = false;
-        state.paused = false;
+    if (!CloseAudioPath()) {
+        return false;
     }
     const std::string cmd = "open \"" + EscapeMciString(path) + "\" type waveaudio alias " + state.alias;
     if (!MciSend(cmd)) {
@@ -142,15 +165,6 @@ bool PauseAudio() {
     }
     state.paused = true;
     return MciSend("pause " + state.alias);
-}
-
-bool StopAudioPlayback() {
-    MciPlayerState& state = PlayerState();
-    if (!state.open) {
-        return false;
-    }
-    state.paused = false;
-    return MciSend("stop " + state.alias);
 }
 
 bool SeekAudioRelative(int deltaMs) {
@@ -362,6 +376,12 @@ void DatasetStudioPanel::RecomputeFilteredList() {
                 continue;
             }
         }
+        if (m_reviewFilterIndex == 1 && ev.reviewed) {
+            continue;
+        }
+        if (m_reviewFilterIndex == 2 && !ev.reviewed) {
+            continue;
+        }
         if (ev.candidateScore < m_minScoreFilter) {
             continue;
         }
@@ -370,6 +390,8 @@ void DatasetStudioPanel::RecomputeFilteredList() {
         }
         if (!ContainsCaseInsensitive(ev.id, m_searchText) &&
             !ContainsCaseInsensitive(ev.eventType, m_searchText) &&
+            !ContainsCaseInsensitive(ev.decision, m_searchText) &&
+            !ContainsCaseInsensitive(ev.sessionId, m_searchText) &&
             !ContainsCaseInsensitive(ev.deviceName, m_searchText) &&
             !ContainsCaseInsensitive(ev.notes, m_searchText)) {
             continue;
@@ -464,9 +486,27 @@ void DatasetStudioPanel::PlaySelectedAudio() {
     }
 }
 
-void DatasetStudioPanel::StopAudio() {
-    StopAudioPlayback();
-    m_isPlaying = false;
+void DatasetStudioPanel::ReplaySelectedAudio() {
+    const auto selected = m_manager.GetEvent(m_selectedId);
+    if (!selected.has_value()) {
+        ToastStatus("No event selected", false);
+        return;
+    }
+    if (ReplayAudioPath(selected->audioPath)) {
+        m_isPlaying = true;
+        PushReplay(selected->id);
+        ToastStatus("Replay " + selected->id, true);
+    } else {
+        ToastStatus("Failed to replay audio for " + selected->id, false);
+    }
+}
+
+bool DatasetStudioPanel::StopAudio() {
+    const bool closed = CloseAudioPath();
+    if (closed) {
+        m_isPlaying = false;
+    }
+    return closed;
 }
 
 void DatasetStudioPanel::ApplyLabelToSelection(DatasetLabel label) {
@@ -479,13 +519,23 @@ void DatasetStudioPanel::ApplyLabelToSelection(DatasetLabel label) {
         return;
     }
 
+    const std::string nextId = FindNextReviewId(ids);
+    if (!StopAudio()) {
+        ToastStatus("Could not close the selected audio before moving it", false);
+        return;
+    }
+
     int moved = 0;
+    int reviewed = 0;
     for (const std::string& id : ids) {
         const auto before = m_manager.GetEvent(id);
         if (!before.has_value()) {
             continue;
         }
         const DatasetOpResult result = m_manager.MoveLabel(id, label);
+        if (result.ok && !before->reviewed) {
+            ++reviewed;
+        }
         if (result.ok && before->label != label) {
             ++moved;
         }
@@ -497,12 +547,44 @@ void DatasetStudioPanel::ApplyLabelToSelection(DatasetLabel label) {
     }
 
     m_sessionMoved += moved;
-    m_sessionLabeled += moved;
+    m_sessionLabeled += reviewed;
     RefreshIndex();
-    if (!ids.empty()) {
+    if (m_autoAdvance && !nextId.empty()) {
+        const auto visible = std::find_if(m_filtered.begin(), m_filtered.end(), [&](const DatasetEventRecord& ev) {
+            return ev.id == nextId;
+        });
+        if (visible != m_filtered.end()) {
+            m_multiSelect.clear();
+            m_multiSelect.insert(nextId);
+            SelectEvent(nextId);
+            if (m_autoPlayNext) PlaySelectedAudio();
+        }
+    } else if (!m_autoAdvance && !ids.empty() && m_manager.GetEvent(ids.front()).has_value()) {
+        m_multiSelect.clear();
+        m_multiSelect.insert(ids.front());
         SelectEvent(ids.front());
     }
-    ToastStatus("Moved " + std::to_string(moved) + " event(s) to " + LabelDisplayName(label), true);
+    ToastStatus("Reviewed " + std::to_string(reviewed) + " event(s); moved " +
+                std::to_string(moved) + " to " + LabelDisplayName(label), true);
+}
+
+std::string DatasetStudioPanel::FindNextReviewId(const std::vector<std::string>& selectedIds) const {
+    if (m_filtered.empty()) return {};
+    const std::set<std::string> selected(selectedIds.begin(), selectedIds.end());
+    size_t lastSelected = 0;
+    bool foundSelected = false;
+    for (size_t i = 0; i < m_filtered.size(); ++i) {
+        if (selected.count(m_filtered[i].id) > 0) {
+            lastSelected = i;
+            foundSelected = true;
+        }
+    }
+    const size_t start = foundSelected ? lastSelected + 1 : 0;
+    for (size_t offset = 0; offset < m_filtered.size(); ++offset) {
+        const size_t index = (start + offset) % m_filtered.size();
+        if (selected.count(m_filtered[index].id) == 0) return m_filtered[index].id;
+    }
+    return {};
 }
 
 void DatasetStudioPanel::DeleteSelection() {
@@ -512,6 +594,11 @@ void DatasetStudioPanel::DeleteSelection() {
     }
     if (ids.empty()) {
         ToastStatus("No event selected", false);
+        return;
+    }
+
+    if (!StopAudio()) {
+        ToastStatus("Could not close the selected audio before deleting it", false);
         return;
     }
 
@@ -534,6 +621,10 @@ void DatasetStudioPanel::DeleteSelection() {
 }
 
 void DatasetStudioPanel::RunUndo() {
+    if (!StopAudio()) {
+        ToastStatus("Could not close the selected audio before undo", false);
+        return;
+    }
     const DatasetOpResult result = m_manager.Undo();
     if (!result.ok) {
         ToastStatus(result.message, false);
@@ -544,17 +635,17 @@ void DatasetStudioPanel::RunUndo() {
     ToastStatus(result.message, true);
 }
 
+void DatasetStudioPanel::ExportManifest() {
+    const DatasetOpResult result = m_manager.ExportManifest();
+    ToastStatus(result.message, result.ok);
+    if (result.ok) RefreshIndex();
+}
+
 void DatasetStudioPanel::HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
-        if (m_isPlaying) {
-            if (PauseAudio()) {
-                m_isPlaying = false;
-                ToastStatus("Paused", true);
-            }
-        } else {
-            PlaySelectedAudio();
-        }
+        ReplaySelectedAudio();
     }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
         RunUndo();
@@ -582,6 +673,10 @@ void DatasetStudioPanel::RenderToolbar() {
         RefreshIndex();
     }
     ImGui::SameLine();
+    if (ImGui::Button("Export Manifest")) {
+        ExportManifest();
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Undo")) {
         RunUndo();
     }
@@ -598,19 +693,12 @@ void DatasetStudioPanel::RenderToolbar() {
     }
     ImGui::SameLine();
     if (ImGui::Button("Stop")) {
-        StopAudio();
-        ToastStatus("Stopped", true);
+        const bool stopped = StopAudio();
+        ToastStatus(stopped ? "Stopped" : "Could not close audio", stopped);
     }
     ImGui::SameLine();
     if (ImGui::Button("Replay")) {
-        const auto selected = m_manager.GetEvent(m_selectedId);
-        if (selected.has_value()) {
-            if (ReplayAudioPath(selected->audioPath)) {
-                m_isPlaying = true;
-                PushReplay(selected->id);
-                ToastStatus("Replay " + selected->id, true);
-            }
-        }
+        ReplaySelectedAudio();
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete")) {
@@ -620,10 +708,20 @@ void DatasetStudioPanel::RenderToolbar() {
 
     for (size_t i = 0; i < std::size(kLabels); ++i) {
         ImGui::SameLine();
-        if (ImGui::Button(kLabelDisplayNames[i])) {
+        const std::string buttonLabel = std::to_string(i + 1) + ": " + kLabelDisplayNames[i];
+        if (ImGui::Button(buttonLabel.c_str())) {
             ApplyLabelToSelection(kLabels[i]);
         }
+        if (kLabels[i] == DatasetLabel::Unknown && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Keep the Unknown label but mark the clip reviewed");
+        }
     }
+
+    ImGui::Checkbox("Auto advance", &m_autoAdvance);
+    ImGui::SameLine();
+    ImGui::Checkbox("Auto play next", &m_autoPlayNext);
+    ImGui::SameLine();
+    ImGui::TextDisabled("Shortcuts: Space replay | 1-6 label/review | Ctrl+Z undo");
 
     char searchBuffer[256] = {};
     std::snprintf(searchBuffer, sizeof(searchBuffer), "%s", m_searchText.c_str());
@@ -633,6 +731,10 @@ void DatasetStudioPanel::RenderToolbar() {
     }
     ImGui::SameLine();
     if (ImGui::Combo("Label Filter", &m_labelFilterIndex, kLabelFilterItems, static_cast<int>(std::size(kLabelFilterItems)))) {
+        RecomputeFilteredList();
+    }
+    ImGui::SameLine();
+    if (ImGui::Combo("Review Filter", &m_reviewFilterIndex, kReviewFilterItems, static_cast<int>(std::size(kReviewFilterItems)))) {
         RecomputeFilteredList();
     }
     if (ImGui::SliderFloat("Min Score", &m_minScoreFilter, 0.0f, 1.0f, "%.2f")) {
@@ -669,7 +771,8 @@ void DatasetStudioPanel::RenderBrowser() {
             if (it != grouped.end()) {
                 for (const auto& ev : it->second) {
                     const bool selected = m_multiSelect.count(ev.id) > 0;
-                    if (ImGui::Selectable(ev.id.c_str(), selected)) {
+                    const std::string displayId = std::string(ev.reviewed ? "[x] " : "[ ] ") + ev.id;
+                    if (ImGui::Selectable(displayId.c_str(), selected)) {
                         const bool ctrl = ImGui::GetIO().KeyCtrl;
                         const bool shift = ImGui::GetIO().KeyShift;
                         if (shift && !m_lastAnchorId.empty()) {
@@ -703,10 +806,11 @@ void DatasetStudioPanel::RenderBrowser() {
                         SelectEvent(ev.id);
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("score %.2f | conf %.2f | %s",
+                        ImGui::SetTooltip("score %.2f | conf %.2f | %s | %s",
                                           ev.candidateScore,
                                           ev.confidence,
-                                          ev.eventType.c_str());
+                                          ev.eventType.c_str(),
+                                          ev.decision.c_str());
                     }
                 }
             }
@@ -885,7 +989,10 @@ void DatasetStudioPanel::RenderMetadataSection() {
 
     ImGui::Text("ID: %s", selected->id.c_str());
     ImGui::Text("Label: %s", LabelDisplayName(selected->label));
+    ImGui::Text("Reviewed: %s", selected->reviewed ? "Yes" : "No");
     ImGui::Text("Type: %s", selected->eventType.c_str());
+    ImGui::Text("Decision: %s", selected->decision.empty() ? "legacy/unspecified" : selected->decision.c_str());
+    ImGui::Text("Session: %s", selected->sessionId.empty() ? "legacy/unspecified" : selected->sessionId.c_str());
     ImGui::Text("Timestamp: %s", FormatTimestamp(selected->timestampMs).c_str());
     ImGui::Text("Score: %.3f", selected->candidateScore);
     ImGui::Text("Confidence: %.3f", selected->confidence);
@@ -992,11 +1099,16 @@ void DatasetStudioPanel::RenderReplayQueueSection() {
 void DatasetStudioPanel::RenderSessionSection() {
     ImGui::SeparatorText("Today's Progress");
     const auto stats = m_manager.GetStatistics();
+    const size_t unreviewed = static_cast<size_t>(std::count_if(
+        m_manager.GetEvents().begin(),
+        m_manager.GetEvents().end(),
+        [](const DatasetEventRecord& event) { return !event.reviewed; }));
     ImGui::Text("Labeled: %d", m_sessionLabeled);
     ImGui::Text("Moved: %d", m_sessionMoved);
     ImGui::Text("Deleted: %d", m_sessionDeleted);
     ImGui::Text("Undo: %d", m_sessionUndone);
     ImGui::Text("Remaining Unknown: %zu", stats.at("unknown"));
+    ImGui::Text("Remaining Unreviewed: %zu", unreviewed);
 }
 
 void DatasetStudioPanel::RenderDeleteConfirmPopup() {

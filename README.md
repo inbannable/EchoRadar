@@ -13,14 +13,15 @@ The project already has a working audio-analysis and dataset-tooling foundation.
 | STFT and feature extraction | Working | Produces stereo spectra and transient/spectral features. |
 | Multi-stage gunshot detector | Working prototype | Implemented and unit-tested with synthetic feature sequences; real game-audio accuracy is not yet measured. |
 | Gunshot monitor and visualizer | Working tools | Show detector state, scores, features, and candidate decisions. |
-| Dataset recorder and Dataset Studio | Working prototype | Can record, inspect, replay, label, and quality-check clips. Data-integrity hardening is the next priority. |
+| Dataset recorder and Dataset Studio | Safer working prototype | Uses restart-safe IDs, atomic event publishing, complete manifests, review status, replay, filtering, and keyboard-assisted labeling. |
+| Extracted-asset inventory | Working | Scans local WAV assets without modifying them, applies four-class rules, records audio metadata and SHA-256 hashes, and reports duplicates and low-confidence labels. |
 | Footstep detector | Placeholder | The current implementation does not emit events. |
 | Direction estimator | Partial prototype | Basic nearest-neighbor inference exists, but calibration, persistence, confidence, and circular averaging are unfinished. |
 | Direction tracker | Basic implementation | Circular smoothing exists but is not yet validated as part of a complete localization pipeline. |
 | Production overlay | Placeholder | The Windows/DX11 overlay shell exists, but rendering is not implemented. |
 | Main `EchoRadar` application | Not integrated | It still uses legacy placeholder detectors instead of the working gunshot pipeline. |
 
-The current source builds successfully, and the automated suite contains **72 passing tests**. These tests cover core algorithms and dataset operations, but they do not yet prove accuracy on recorded game audio or validate the complete application end to end.
+The current source builds successfully, and the automated suite contains **83 passing tests**. These tests cover core algorithms, dataset operations, and extracted-asset inventory, but they do not yet prove accuracy on recorded game audio or validate the complete application end to end.
 
 ## Working pipeline
 
@@ -118,13 +119,14 @@ After a Release build with the Visual Studio generator:
 | Gunshot monitor | `build\tools\gunshot_monitor\Release\gunshot_monitor.exe` | Inspect detector state, confidence, and emitted events. |
 | Gunshot visualizer | `build\tools\gunshot_visualizer\Release\gunshot_visualizer.exe` | Tune and explain the detector; browse and label datasets. |
 | Dataset recorder | `build\tools\dataset_recorder\Release\dataset_recorder.exe` | Capture event-centered WAV, CSV, and JSON records. |
+| Asset inventory | `build\tools\asset_inventory\Release\asset_inventory.exe` | Classify and validate a local extracted-WAV library without changing its source files. |
 
 All capture tools support the default input device and a partial device-name match. For example:
 
 ```powershell
 .\build\tools\audio_monitor\Release\audio_monitor.exe --list-devices-detailed
 .\build\tools\audio_monitor\Release\audio_monitor.exe --device "Stereo Mix"
-.\build\tools\gunshot_visualizer\Release\gunshot_visualizer.exe --device "CABLE"
+.\build\tools\gunshot_visualizer\Release\gunshot_visualizer.exe --device "CABLE" --dataset-root "dataset"
 ```
 
 For game audio, use a Windows loopback input such as Stereo Mix or route game audio through a virtual cable. A physical microphone captures room audio and is usually not suitable for detector evaluation.
@@ -150,15 +152,41 @@ features.csv    Per-frame extracted features and detector values
 metadata.json   Capture and detector metadata
 ```
 
-Freshly recorded events initially go to `unknown/` and can be labeled in Dataset Studio.
+Freshly recorded events initially go to `unknown/` and can be labeled in Dataset Studio. Metadata also records the recorder session, the detector's final decision, and whether a person has reviewed the clip.
 
-> **Important:** the recorder is still a prototype. Before collecting an irreplaceable dataset, complete the data-integrity work in Phase 1 below. In particular, event identity, overwrite protection, atomic persistence, and manifest completeness must be hardened.
+> **Important:** the recorder is now safe enough for a small pilot dataset, but it still captures event-centered detector candidates rather than complete continuous sessions. A large evaluation dataset should wait for Phase 2 because candidate-only recording cannot reveal gunshots that the detector missed entirely.
+
+## Extracted asset workflow
+
+Locally extracted game assets are the primary source corpus for offline development. Keep them outside version control: `pilot-datasets/**` is ignored, and extracted audio must not be committed or redistributed with EchoRadar.
+
+Generate a deterministic local inventory with:
+
+```powershell
+.\build\tools\asset_inventory\Release\asset_inventory.exe `
+  --asset-root "Z:\CODE\EchoRadar\pilot-datasets\sounds" `
+  --output-dir "Z:\CODE\EchoRadar\pilot-datasets\asset-inventory"
+```
+
+The tool writes:
+
+```text
+asset_manifest.csv   Every valid WAV, label, subtype, source group, format, levels, hash, and duplicate relationship
+review_needed.csv    Only invalid or low-confidence classifications
+summary.json         Counts and total duration
+```
+
+The four detector-oriented labels are `gunshot`, `footstep`, `mechanical`, and `other`. Reloads, weapon switches, magazine actions, bolts, slides, pumps, draws, and related handling sounds belong to `mechanical`. The inventory reads PCM8/PCM16 WAV headers and levels but does not yet resample or copy audio.
+
+See [Milestone 7: Extracted Asset Inventory](docs/milestone7_asset_inventory.md) for the classification contract and completion gate.
 
 ## Development plan
 
 Work should proceed in this order. Each phase has an explicit completion gate so a milestone is not marked complete merely because its classes exist.
 
 ### Phase 1 — Make dataset recording safe
+
+**Status: completed.**
 
 1. Replace session-local event numbering with collision-proof IDs.
 2. Refuse to overwrite an existing event.
@@ -172,19 +200,25 @@ Work should proceed in this order. Each phase has an explicit completion gate so
 
 ### Phase 2 — Add offline replay and measurable evaluation
 
-1. Add a WAV replay path that uses the same STFT, feature, and detector code as live capture.
-2. Evaluate labeled recordings by session, not by randomly splitting neighboring clips.
-3. Report precision, recall, F1, false positives per minute, detection latency, and burst shot-count accuracy.
-4. Keep a small set of representative audio fixtures as deterministic regression tests.
+**Status: extracted-asset inventory complete; conversion, generation, and replay pending.**
+
+1. Inventory local extracted WAV assets with hashes, rule provenance, duplicate relationships, and a low-confidence review list.
+2. Decode PCM8/PCM16 mono/stereo assets and resample them to the production 48 kHz stereo format.
+3. Split by source asset, weapon family, footstep surface, and duplicate hash before augmentation.
+4. Generate deterministic continuous synthetic sessions with exact ground-truth event timelines.
+5. Add a WAV replay path that uses the same STFT, feature, and detector code as live capture.
+6. Report precision, recall, F1, false positives per minute, detection latency, and burst shot-count accuracy.
+7. Keep only redistributable synthetic fixtures in automated tests; never commit extracted game audio.
 
 **Complete when:** detector changes can be compared from one reproducible report without launching a game or using a live audio device.
 
 ### Phase 3 — Validate the gunshot detector with real data
 
-1. Record multiple weapons, firing modes, distances, maps, volume levels, and audio-routing setups.
-2. Record difficult negatives: footsteps, reloads, weapon switches, UI sounds, ambience, music, and speech.
-3. Add session, source, weapon, device, routing, and gain metadata.
-4. Establish a baseline before tuning thresholds or feature weights.
+1. Use extracted assets and generated mixtures for development, then validate on small held-out continuous gameplay sessions.
+2. Cover multiple weapons, firing modes, distances, maps, volume levels, and audio-routing setups.
+3. Include difficult negatives: footsteps, mechanical handling, UI sounds, ambience, music, and speech.
+4. Add session, source, weapon, device, routing, and gain metadata.
+5. Establish a baseline before tuning thresholds or feature weights.
 
 **Complete when:** accuracy targets are written down and met on held-out recording sessions.
 

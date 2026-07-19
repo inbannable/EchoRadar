@@ -239,7 +239,8 @@ void ComputePlotRange(const std::vector<float>& values,
 int ParseCommonArgs(int argc,
                     char* argv[],
                     std::string& deviceArg,
-                    bool& listOnly) {
+                    bool& listOnly,
+                    std::string& datasetRoot) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
         if (arg == "--list-devices" || arg == "-l") {
@@ -251,12 +252,20 @@ int ParseCommonArgs(int argc,
                 std::fprintf(stderr, "[Error] --device requires a device name argument\n");
                 return 1;
             }
+        } else if (arg == "--dataset-root") {
+            if (i + 1 < argc) {
+                datasetRoot = argv[++i];
+            } else {
+                std::fprintf(stderr, "[Error] --dataset-root requires a path argument\n");
+                return 1;
+            }
         } else if (arg == "--help" || arg == "-h") {
             std::printf(
                 "Usage: gunshot_visualizer [options]\n\n"
                 "Options:\n"
                 "  --list-devices              List available input devices\n"
                 "  --device <name>             Capture from a specific device (case-insensitive match)\n"
+                "  --dataset-root <path>       Dataset root folder (default: dataset)\n"
                 "  --help                      Show this help message\n");
             return 0;
         }
@@ -571,8 +580,9 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, OnSignal);
 
     std::string deviceArg;
+    std::string datasetRoot{"dataset"};
     bool listOnly = false;
-    const int argParseResult = ParseCommonArgs(argc, argv, deviceArg, listOnly);
+    const int argParseResult = ParseCommonArgs(argc, argv, deviceArg, listOnly, datasetRoot);
     if (argParseResult != -1) {
         return argParseResult;
     }
@@ -749,7 +759,7 @@ int main(int argc, char* argv[]) {
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    DatasetStudioPanel studio("dataset");
+    DatasetStudioPanel studio(datasetRoot);
     float displayWindowSec = kDefaultTimeWindowSec;
     bool done = false;
     while (!done && g_running.load(std::memory_order_relaxed)) {
@@ -884,8 +894,9 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, OnSignal);
 
     std::string deviceArg;
+    std::string datasetRoot{"dataset"};
     bool listOnly = false;
-    const int argParseResult = ParseCommonArgs(argc, argv, deviceArg, listOnly);
+    const int argParseResult = ParseCommonArgs(argc, argv, deviceArg, listOnly, datasetRoot);
     if (argParseResult != -1) {
         return argParseResult;
     }

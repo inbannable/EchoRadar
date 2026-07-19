@@ -118,6 +118,14 @@ inline float GetFloatVal(const std::map<std::string, std::string>& m, const std:
     try { return std::stof(it->second); } catch (...) { return def; }
 }
 
+inline bool GetBoolVal(const std::map<std::string, std::string>& m, const std::string& key, bool def = false) {
+    auto it = m.find(key);
+    if (it == m.end() || it->second.empty()) return def;
+    if (it->second == "true" || it->second == "1") return true;
+    if (it->second == "false" || it->second == "0") return false;
+    return def;
+}
+
 inline std::string JsonEscapeStr(const std::string& value) {
     std::string out;
     out.reserve(value.size() + 8);

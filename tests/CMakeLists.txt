@@ -10,6 +10,7 @@ add_executable(echoradar_tests
     test_localization.cpp
     test_tracking.cpp
     test_dataset_manager.cpp
+    test_asset_inventory.cpp
 )
 target_link_libraries(echoradar_tests
     PRIVATE
