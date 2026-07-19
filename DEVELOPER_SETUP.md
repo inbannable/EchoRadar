@@ -227,7 +227,7 @@ ctest --test-dir build --output-on-failure --no-tests=error
 
 ## Next Steps
 
-- Review [Architecture Documentation](README.md#Architecture)
-- Check individual module READMEs in `src/*/`
+- Review the [working pipeline](README.md#working-pipeline)
+- Review the [repository layout and module overview](README.md#repository-layout)
 - Run unit tests: `ctest --test-dir build --output-on-failure`
-- Start with [Milestone 1: AudioCapture](docs/ROADMAP.md)
+- Follow the ordered [development plan](README.md#development-plan)
