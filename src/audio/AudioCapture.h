@@ -61,6 +61,9 @@ public:
     /// Number of stereo frames currently in the internal ring buffer.
     size_t GetAvailableFrames() const;
 
+    /// Total input frames dropped because the callback ring buffer was full.
+    uint64_t GetDroppedFrames() const;
+
     /// Read up to @p frameCount interleaved stereo float32 frames into @p dst.
     /// @return Number of frames actually copied.
     size_t ReadInterleaved(float* dst, size_t frameCount);

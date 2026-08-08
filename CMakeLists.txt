@@ -9,6 +9,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ── Build options ──────────────────────────────────────────────────────────────
 option(ECHORADAR_BUILD_TESTS "Build unit tests"  ON)
 option(ECHORADAR_BUILD_TOOLS "Build helper tools" ON)
+option(ECHORADAR_ENABLE_ONNX "Enable ONNX Runtime recognition backend" OFF)
+option(ECHORADAR_BUILD_STEAM_AUDIO_RENDERER "Build offline Steam Audio v4.8.1 dataset renderer" OFF)
 
 # ── FetchContent ───────────────────────────────────────────────────────────────
 include(FetchContent)

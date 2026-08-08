@@ -31,6 +31,7 @@ struct AudioCapture::Impl {
     std::atomic<float> leftPeak{0.f};
     std::atomic<float> rightPeak{0.f};
     std::atomic<bool>  running{false};
+    std::atomic<uint64_t> droppedFrames{0};
 
     Impl() : ringBuf(AudioCapture::kDefaultBufferFrames) {}
 
@@ -67,7 +68,9 @@ struct AudioCapture::Impl {
         const auto* samples = static_cast<const float*>(pIn);
 
         // Push raw samples — no heap allocation, never blocks.
-        self->ringBuf.PushInterleaved(samples, frameCount);
+        const size_t written = self->ringBuf.PushInterleaved(samples, frameCount);
+        self->droppedFrames.fetch_add(static_cast<uint64_t>(frameCount - written),
+                                      std::memory_order_relaxed);
 
         // Update rolling level metrics — no heap allocation.
         self->UpdateLevels(samples, frameCount);
@@ -107,6 +110,7 @@ bool AudioCapture::Start(const std::string& device_name, FrameCallback callback)
 bool AudioCapture::StartInternal(const char* deviceName) {
     if (m_impl->running.load(std::memory_order_acquire)) return false;
     m_impl->ringBuf.Clear();
+    m_impl->droppedFrames.store(0, std::memory_order_relaxed);
 
     // ── Initialise context ────────────────────────────────────────────────────
     if (ma_context_init(nullptr, 0, nullptr, &m_impl->ctx) != MA_SUCCESS) {
@@ -224,6 +228,10 @@ bool AudioCapture::IsRunning() const {
 
 size_t AudioCapture::GetAvailableFrames() const {
     return m_impl ? m_impl->ringBuf.GetAvailableFrames() : 0;
+}
+
+uint64_t AudioCapture::GetDroppedFrames() const {
+    return m_impl ? m_impl->droppedFrames.load(std::memory_order_relaxed) : 0;
 }
 
 size_t AudioCapture::ReadInterleaved(float* dst, size_t frameCount) {

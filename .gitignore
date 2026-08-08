@@ -37,6 +37,13 @@ pilot-datasets/**
 
 # Model files
 model.bin
+models/
+ml/.venv/
+ml/*.egg-info/
+ml/**/__pycache__/
+ml/.pytest_cache/
+ml/runs/
+ml/generated/
 
 # macOS
 .DS_Store

@@ -11,6 +11,7 @@ add_executable(echoradar_tests
     test_tracking.cpp
     test_dataset_manager.cpp
     test_asset_inventory.cpp
+    test_recognition.cpp
 )
 target_link_libraries(echoradar_tests
     PRIVATE
@@ -22,6 +23,7 @@ target_link_libraries(echoradar_tests
         echoradar_localization
         echoradar_tracking
         echoradar_dataset
+        echoradar_recognition
         GTest::gtest_main
 )
 include(GoogleTest)
