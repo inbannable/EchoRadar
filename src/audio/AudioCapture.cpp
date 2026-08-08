@@ -1,278 +1,553 @@
 #include "AudioCapture.h"
 #include "AudioRingBuffer.h"
 #include "miniaudio.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <mutex>
+#include <sstream>
 #include <thread>
 #include <vector>
 
 namespace EchoRadar {
+namespace {
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Internal implementation
-// ─────────────────────────────────────────────────────────────────────────────
+std::string Lower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    return value;
+}
 
-struct AudioCapture::Impl {
-    ma_context  ctx{};
-    ma_device   dev{};
-    bool        ctxInit{false};
-    bool        devInit{false};
-
-    AudioRingBuffer              ringBuf;
-    AudioCapture::FrameCallback  legacyCb;  ///< optional callback via Start()
-
-    std::atomic<float> leftRms{0.f};
-    std::atomic<float> rightRms{0.f};
-    std::atomic<float> leftPeak{0.f};
-    std::atomic<float> rightPeak{0.f};
-    std::atomic<bool>  running{false};
-    std::atomic<uint64_t> droppedFrames{0};
-
-    Impl() : ringBuf(AudioCapture::kDefaultBufferFrames) {}
-
-    // ── Level helper — called inside audio callback (no alloc, no log) ───────
-    void UpdateLevels(const float* samples, ma_uint32 frameCount) {
-        float sumL = 0.f, sumR = 0.f, pkL = 0.f, pkR = 0.f;
-        for (ma_uint32 i = 0; i < frameCount; ++i) {
-            const float l = samples[i * 2];
-            const float r = samples[i * 2 + 1];
-            sumL += l * l;
-            sumR += r * r;
-            const float al = l < 0.f ? -l : l;
-            const float ar = r < 0.f ? -r : r;
-            if (al > pkL) pkL = al;
-            if (ar > pkR) pkR = ar;
-        }
-        const float invN = 1.f / static_cast<float>(frameCount);
-        leftRms .store(std::sqrt(sumL * invN), std::memory_order_relaxed);
-        rightRms.store(std::sqrt(sumR * invN), std::memory_order_relaxed);
-        leftPeak .store(pkL,                   std::memory_order_relaxed);
-        rightPeak.store(pkR,                   std::memory_order_relaxed);
+std::string FingerprintDeviceId(const ma_device_id& id) {
+    constexpr uint64_t kOffset = 1469598103934665603ull;
+    constexpr uint64_t kPrime = 1099511628211ull;
+    uint64_t hash = kOffset;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(&id);
+    for (size_t index = 0; index < sizeof(id); ++index) {
+        hash ^= bytes[index];
+        hash *= kPrime;
     }
+    std::ostringstream out;
+    out << "ma:" << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return out.str();
+}
 
-    // ── miniaudio callback ────────────────────────────────────────────────────
-    static void DataCallback(ma_device* pDev, void* /*pOut*/,
-                              const void* pIn, ma_uint32 frameCount)
-    {
-        if (!pDev || !pDev->pUserData) return;  // Safety check added
-        
-        auto* self = static_cast<Impl*>(pDev->pUserData);
-        if (!pIn || frameCount == 0) return;
-        if (!self) return;  // Additional safety check
-        
-        const auto* samples = static_cast<const float*>(pIn);
-
-        // Push raw samples — no heap allocation, never blocks.
-        const size_t written = self->ringBuf.PushInterleaved(samples, frameCount);
-        self->droppedFrames.fetch_add(static_cast<uint64_t>(frameCount - written),
-                                      std::memory_order_relaxed);
-
-        // Update rolling level metrics — no heap allocation.
-        self->UpdateLevels(samples, frameCount);
-
-        // Legacy FrameCallback path — only active when registered via Start().
-        // Heap-allocates an AudioFrame; avoid if you care about callback latency.
-        if (self->legacyCb) {
-            AudioFrame f;
-            f.sample_rate = 48000;
-            f.left .resize(frameCount);
-            f.right.resize(frameCount);
-            for (ma_uint32 i = 0; i < frameCount; ++i) {
-                f.left [i] = samples[i * 2];
-                f.right[i] = samples[i * 2 + 1];
-            }
-            self->legacyCb(f);
-        }
-    }
+struct EndpointMatch {
+    ma_device_type type{ma_device_type_capture};
+    AudioEndpointSelection selection{AudioEndpointSelection::FollowDefault};
+    std::string requestedId;
+    std::string requestedName;
+    ma_device_id id{};
+    AudioDeviceInfo info;
+    bool found{false};
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  AudioCapture
-// ─────────────────────────────────────────────────────────────────────────────
+ma_bool32 FindEndpointCallback(ma_context*, ma_device_type type,
+                               const ma_device_info* nativeInfo, void* userData) {
+    auto& match = *static_cast<EndpointMatch*>(userData);
+    if (type != match.type) return MA_TRUE;
 
-AudioCapture::AudioCapture()  : m_impl(std::make_unique<Impl>()) {}
-AudioCapture::~AudioCapture() { Stop(); }
+    AudioDeviceInfo info;
+    info.id = FingerprintDeviceId(nativeInfo->id);
+    info.name = nativeInfo->name;
+    info.flow = type == ma_device_type_playback ? AudioDeviceFlow::Output : AudioDeviceFlow::Input;
+    info.type = type == ma_device_type_playback ? AudioDeviceType::Loopback : AudioDeviceType::Unknown;
+    info.isDefault = nativeInfo->isDefault != 0;
+    if (nativeInfo->nativeDataFormatCount != 0) {
+        info.nativeChannels = nativeInfo->nativeDataFormats[0].channels;
+        info.nativeSampleRate = nativeInfo->nativeDataFormats[0].sampleRate;
+    }
 
-bool AudioCapture::StartDefault()                        { return StartInternal(nullptr); }
-bool AudioCapture::StartDeviceByName(const std::string& name) {
-    return StartInternal(name.empty() ? nullptr : name.c_str());
+    bool selected = false;
+    if (match.selection == AudioEndpointSelection::Fixed) {
+        selected = (!match.requestedId.empty() && info.id == match.requestedId) ||
+            (!match.requestedName.empty() &&
+             Lower(info.name).find(Lower(match.requestedName)) != std::string::npos);
+    } else {
+        selected = info.isDefault || !match.found;
+    }
+
+    if (selected) {
+        match.id = nativeInfo->id;
+        match.info = std::move(info);
+        match.found = true;
+    }
+    return match.selection == AudioEndpointSelection::Fixed && match.found ? MA_FALSE : MA_TRUE;
 }
-bool AudioCapture::Start(const std::string& device_name, FrameCallback callback) {
-    m_impl->legacyCb = std::move(callback);
-    return StartInternal(device_name.empty() ? nullptr : device_name.c_str());
-}
 
-bool AudioCapture::StartInternal(const char* deviceName) {
-    if (m_impl->running.load(std::memory_order_acquire)) return false;
-    m_impl->ringBuf.Clear();
-    m_impl->droppedFrames.store(0, std::memory_order_relaxed);
-
-    // ── Initialise context ────────────────────────────────────────────────────
-    if (ma_context_init(nullptr, 0, nullptr, &m_impl->ctx) != MA_SUCCESS) {
-        std::cerr << "[AudioCapture] Failed to initialise audio context.\n";
-        return false;
-    }
-    m_impl->ctxInit = true;
-
-    // ── Search for device by name ─────────────────────────────────────────────
-    ma_device_id  foundId{};
-    ma_device_id* pFoundId = nullptr;
-
-    if (deviceName) {
-        struct SearchCtx {
-            std::string  needle;
-            ma_device_id id{};
-            bool         found{false};
-        } sc;
-
-        std::string lower(deviceName);
-        std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c){ return std::tolower(c); });
-        sc.needle = std::move(lower);
-
-        ma_context_enumerate_devices(
-            &m_impl->ctx,
-            [](ma_context*, ma_device_type type,
-               const ma_device_info* pInfo, void* ud) -> ma_bool32
-            {
-                auto& s = *static_cast<SearchCtx*>(ud);
-                if (type == ma_device_type_capture && !s.found) {
-                    std::string name(pInfo->name);
-                    std::transform(name.begin(), name.end(), name.begin(),
-                                   [](unsigned char c){ return std::tolower(c); });
-                    if (name.find(s.needle) != std::string::npos) {
-                        s.id    = pInfo->id;
-                        s.found = true;
-                    }
-                }
-                return MA_TRUE;
-            },
-            &sc);
-
-        if (sc.found) {
-            foundId  = sc.id;
-            pFoundId = &foundId;
-        } else {
-            std::cerr << "[AudioCapture] Device '" << deviceName
-                      << "' not found. Falling back to default.\n";
-        }
-    }
-
-    // ── Configure and open device ─────────────────────────────────────────────
-    ma_device_config cfg = ma_device_config_init(ma_device_type_capture);
-    cfg.capture.format   = ma_format_f32;
-    cfg.capture.channels = 2;
-    cfg.sampleRate       = 48000;
-    cfg.dataCallback     = Impl::DataCallback;
-    cfg.pUserData        = m_impl.get();
-
-    if (pFoundId)
-        cfg.capture.pDeviceID = pFoundId;
-
-    if (ma_device_init(&m_impl->ctx, &cfg, &m_impl->dev) != MA_SUCCESS) {
-        std::cerr << "[AudioCapture] Failed to open audio device.\n";
-        ma_context_uninit(&m_impl->ctx);
-        m_impl->ctxInit = false;
-        return false;
-    }
-    m_impl->devInit = true;
-
-    // Verify actual format matches what was requested.
-    if (m_impl->dev.capture.channels != 2 || m_impl->dev.sampleRate != 48000) {
-        std::cerr << "[AudioCapture] Warning: device opened with "
-                  << m_impl->dev.capture.channels << " ch @ "
-                  << m_impl->dev.sampleRate << " Hz (expected 2ch/48kHz). "
-                  << "miniaudio will convert, but DSP accuracy may be reduced.\n";
-    }
-
-    if (ma_device_start(&m_impl->dev) != MA_SUCCESS) {
-        std::cerr << "[AudioCapture] Failed to start audio device.\n";
-        ma_device_uninit(&m_impl->dev);
-        ma_context_uninit(&m_impl->ctx);
-        m_impl->devInit = m_impl->ctxInit = false;
-        return false;
-    }
-
-    m_impl->running.store(true, std::memory_order_release);
-    std::cout << "[AudioCapture] Started: " << m_impl->dev.capture.name
-              << "  ch=" << m_impl->dev.capture.channels
-              << "  rate=" << m_impl->dev.sampleRate << " Hz\n";
+bool FindEndpoint(ma_context& context, const AudioCaptureConfig& config,
+                  ma_device_id& id, AudioDeviceInfo& info) {
+    EndpointMatch match;
+    match.type = config.source == AudioCaptureSource::SystemLoopback
+        ? ma_device_type_playback : ma_device_type_capture;
+    match.selection = config.selection;
+    match.requestedId = config.endpointId;
+    match.requestedName = config.endpointName;
+    ma_context_enumerate_devices(&context, FindEndpointCallback, &match);
+    if (!match.found) return false;
+    id = match.id;
+    info = std::move(match.info);
     return true;
 }
 
-void AudioCapture::Stop() {
-    if (!m_impl || !m_impl->running.load(std::memory_order_acquire)) return;
-    m_impl->running.store(false, std::memory_order_release);
-    
-    // Give the audio callback time to see the running flag and exit
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+} // namespace
 
-    if (m_impl->devInit) {
-        ma_device_uninit(&m_impl->dev); // blocks until in-flight callback returns
-        m_impl->devInit = false;
+struct AudioCapture::Impl {
+    ma_context context{};
+    ma_device device{};
+    bool contextInitialized{false};
+    bool deviceInitialized{false};
+
+    AudioCaptureConfig config;
+    std::unique_ptr<AudioRingBuffer> ring;
+    AudioCapture::FrameCallback legacyCallback;
+
+    std::atomic<float> leftRms{0.0f};
+    std::atomic<float> rightRms{0.0f};
+    std::atomic<float> leftPeak{0.0f};
+    std::atomic<float> rightPeak{0.0f};
+    std::atomic<bool> running{false};
+    std::atomic<bool> plannedStop{false};
+    std::atomic<bool> unexpectedStop{false};
+    std::atomic<uint64_t> droppedFrames{0};
+    std::atomic<uint64_t> lossSerial{0};
+    std::atomic<AudioCaptureState> state{AudioCaptureState::Stopped};
+
+    mutable std::mutex statusMutex;
+    AudioDeviceInfo activeEndpoint;
+    std::string lastError;
+
+    uint64_t observedLossSerial{0};
+    uint64_t nextReadSample{0};
+    std::atomic<uint64_t> streamGeneration{0};
+    std::atomic<uint64_t> discardedBacklogFrames{0};
+    std::atomic<uint64_t> restartCount{0};
+    bool pendingDiscontinuity{false};
+
+    std::chrono::steady_clock::time_point nextEndpointPoll{};
+    std::chrono::steady_clock::time_point nextRetry{};
+    std::chrono::milliseconds retryDelay{250};
+
+    void SetError(std::string error) {
+        std::lock_guard<std::mutex> lock(statusMutex);
+        lastError = std::move(error);
     }
-    if (m_impl->ctxInit) {
-        ma_context_uninit(&m_impl->ctx);
-        m_impl->ctxInit = false;
+
+    void SetEndpoint(const AudioDeviceInfo& info) {
+        std::lock_guard<std::mutex> lock(statusMutex);
+        activeEndpoint = info;
+        lastError.clear();
     }
+
+    void UpdateLevels(const float* samples, ma_uint32 frameCount) {
+        if (samples == nullptr || frameCount == 0) return;
+        float sumLeft = 0.0f;
+        float sumRight = 0.0f;
+        float peakLeft = 0.0f;
+        float peakRight = 0.0f;
+        for (ma_uint32 index = 0; index < frameCount; ++index) {
+            const float left = samples[index * 2];
+            const float right = samples[index * 2 + 1];
+            sumLeft += left * left;
+            sumRight += right * right;
+            peakLeft = std::max(peakLeft, std::abs(left));
+            peakRight = std::max(peakRight, std::abs(right));
+        }
+        const float inverse = 1.0f / static_cast<float>(frameCount);
+        leftRms.store(std::sqrt(sumLeft * inverse), std::memory_order_relaxed);
+        rightRms.store(std::sqrt(sumRight * inverse), std::memory_order_relaxed);
+        leftPeak.store(peakLeft, std::memory_order_relaxed);
+        rightPeak.store(peakRight, std::memory_order_relaxed);
+    }
+
+    static void DataCallback(ma_device* nativeDevice, void*, const void* input,
+                             ma_uint32 frameCount) {
+        if (nativeDevice == nullptr || nativeDevice->pUserData == nullptr ||
+            input == nullptr || frameCount == 0) {
+            return;
+        }
+        auto& self = *static_cast<Impl*>(nativeDevice->pUserData);
+        if (!self.running.load(std::memory_order_acquire) || !self.ring) return;
+        const auto* samples = static_cast<const float*>(input);
+        const size_t written = self.ring->PushInterleaved(samples, frameCount);
+        if (written != frameCount) {
+            self.droppedFrames.fetch_add(frameCount - written, std::memory_order_relaxed);
+            self.lossSerial.fetch_add(1, std::memory_order_release);
+        }
+        self.UpdateLevels(samples, frameCount);
+
+        if (self.legacyCallback) {
+            AudioFrame frame;
+            frame.sample_rate = self.config.sampleRate;
+            frame.left.resize(frameCount);
+            frame.right.resize(frameCount);
+            for (ma_uint32 index = 0; index < frameCount; ++index) {
+                frame.left[index] = samples[index * 2];
+                frame.right[index] = samples[index * 2 + 1];
+            }
+            self.legacyCallback(frame);
+        }
+    }
+
+    static void StopCallback(ma_device* nativeDevice) {
+        if (nativeDevice == nullptr || nativeDevice->pUserData == nullptr) return;
+        auto& self = *static_cast<Impl*>(nativeDevice->pUserData);
+        self.running.store(false, std::memory_order_release);
+        if (!self.plannedStop.load(std::memory_order_acquire)) {
+            self.unexpectedStop.store(true, std::memory_order_release);
+        }
+    }
+
+    void CloseDevice() {
+        plannedStop.store(true, std::memory_order_release);
+        running.store(false, std::memory_order_release);
+        if (deviceInitialized) {
+            ma_device_uninit(&device);
+            deviceInitialized = false;
+        }
+        plannedStop.store(false, std::memory_order_release);
+        unexpectedStop.store(false, std::memory_order_release);
+        if (ring) ring->Clear();
+        leftRms.store(0.0f, std::memory_order_relaxed);
+        rightRms.store(0.0f, std::memory_order_relaxed);
+        leftPeak.store(0.0f, std::memory_order_relaxed);
+        rightPeak.store(0.0f, std::memory_order_relaxed);
+        nextReadSample = 0;
+    }
+
+    bool OpenDevice(bool restarting, std::string& error) {
+        ma_device_id endpointId{};
+        AudioDeviceInfo endpoint;
+        if (!FindEndpoint(context, config, endpointId, endpoint)) {
+            error = config.selection == AudioEndpointSelection::Fixed
+                ? "Configured audio endpoint is unavailable"
+                : "No default audio endpoint is available";
+            return false;
+        }
+
+        const ma_device_type deviceType = config.source == AudioCaptureSource::SystemLoopback
+            ? ma_device_type_loopback : ma_device_type_capture;
+        ma_device_config nativeConfig = ma_device_config_init(deviceType);
+        nativeConfig.capture.format = ma_format_f32;
+        nativeConfig.capture.channels = config.channels;
+        nativeConfig.sampleRate = config.sampleRate;
+        nativeConfig.periodSizeInFrames = config.sampleRate / 100u;
+        nativeConfig.dataCallback = DataCallback;
+        nativeConfig.stopCallback = StopCallback;
+        nativeConfig.pUserData = this;
+        if (config.selection == AudioEndpointSelection::Fixed) {
+            nativeConfig.capture.pDeviceID = &endpointId;
+        }
+
+        const ma_result initializeResult = ma_device_init(&context, &nativeConfig, &device);
+        if (initializeResult != MA_SUCCESS) {
+            error = std::string("Could not open audio endpoint: ") +
+                ma_result_description(initializeResult);
+            return false;
+        }
+        deviceInitialized = true;
+        running.store(true, std::memory_order_release);
+        const ma_result startResult = ma_device_start(&device);
+        if (startResult != MA_SUCCESS) {
+            running.store(false, std::memory_order_release);
+            ma_device_uninit(&device);
+            deviceInitialized = false;
+            error = std::string("Could not start audio endpoint: ") +
+                ma_result_description(startResult);
+            return false;
+        }
+
+        if (streamGeneration.load(std::memory_order_relaxed) == 0) {
+            streamGeneration.store(1, std::memory_order_relaxed);
+        } else if (restarting) {
+            streamGeneration.fetch_add(1, std::memory_order_relaxed);
+        }
+        pendingDiscontinuity = true;
+        nextReadSample = 0;
+        observedLossSerial = lossSerial.load(std::memory_order_acquire);
+        if (restarting) restartCount.fetch_add(1, std::memory_order_relaxed);
+        SetEndpoint(endpoint);
+        state.store(AudioCaptureState::Running, std::memory_order_release);
+        nextEndpointPoll = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(config.endpointPollMs);
+        retryDelay = std::chrono::milliseconds(250);
+        return true;
+    }
+
+    void EnterRecovery(std::string error) {
+        SetError(std::move(error));
+        state.store(AudioCaptureState::Recovering, std::memory_order_release);
+        nextRetry = std::chrono::steady_clock::now() + retryDelay;
+        retryDelay = std::min(retryDelay * 2, std::chrono::milliseconds(5000));
+    }
+};
+
+AudioCapture::AudioCapture() : m_impl(std::make_unique<Impl>()) {}
+AudioCapture::~AudioCapture() { Stop(); }
+
+bool AudioCapture::Start(const AudioCaptureConfig& config) {
+    return StartInternal(config, nullptr);
+}
+
+bool AudioCapture::StartInternal(const AudioCaptureConfig& config, FrameCallback callback) {
+    Stop();
+    m_impl->config = config;
+    m_impl->legacyCallback = std::move(callback);
+    m_impl->droppedFrames.store(0, std::memory_order_relaxed);
+    m_impl->lossSerial.store(0, std::memory_order_relaxed);
+    m_impl->observedLossSerial = 0;
+    m_impl->nextReadSample = 0;
+    m_impl->streamGeneration.store(0, std::memory_order_relaxed);
+    m_impl->discardedBacklogFrames.store(0, std::memory_order_relaxed);
+    m_impl->restartCount.store(0, std::memory_order_relaxed);
+    m_impl->pendingDiscontinuity = false;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->statusMutex);
+        m_impl->activeEndpoint = {};
+        m_impl->lastError.clear();
+    }
+    if (config.sampleRate != 48000 || config.channels != 2 || config.bufferFrames < 2 ||
+        config.retainedFrames > config.maxBacklogFrames ||
+        config.maxBacklogFrames > config.bufferFrames || config.endpointPollMs == 0) {
+        m_impl->SetError("Audio capture requires 48 kHz stereo and a valid backlog policy");
+        m_impl->state.store(AudioCaptureState::Failed, std::memory_order_release);
+        return false;
+    }
+#ifndef _WIN32
+    if (config.source == AudioCaptureSource::SystemLoopback) {
+        m_impl->SetError("System loopback capture is supported only by the Windows WASAPI build");
+        m_impl->state.store(AudioCaptureState::Unsupported, std::memory_order_release);
+        return false;
+    }
+#endif
+
+    m_impl->ring = std::make_unique<AudioRingBuffer>(config.bufferFrames);
+    m_impl->state.store(AudioCaptureState::Starting, std::memory_order_release);
+#ifdef _WIN32
+    const ma_backend backends[] = {ma_backend_wasapi};
+    const ma_result contextResult = ma_context_init(backends, 1, nullptr, &m_impl->context);
+#else
+    const ma_result contextResult = ma_context_init(nullptr, 0, nullptr, &m_impl->context);
+#endif
+    if (contextResult != MA_SUCCESS) {
+        m_impl->SetError(std::string("Could not initialize audio context: ") +
+                         ma_result_description(contextResult));
+        m_impl->state.store(AudioCaptureState::Failed, std::memory_order_release);
+        return false;
+    }
+    m_impl->contextInitialized = true;
+    std::string error;
+    if (!m_impl->OpenDevice(false, error)) {
+        m_impl->EnterRecovery(std::move(error));
+    }
+    return true;
+}
+
+void AudioCapture::Poll() {
+    if (!m_impl || !m_impl->contextInitialized) return;
+    const AudioCaptureState current = m_impl->state.load(std::memory_order_acquire);
+    if (current == AudioCaptureState::Stopped || current == AudioCaptureState::Failed ||
+        current == AudioCaptureState::Unsupported) {
+        return;
+    }
+
+    if (m_impl->unexpectedStop.exchange(false, std::memory_order_acq_rel)) {
+        m_impl->CloseDevice();
+        m_impl->EnterRecovery("Audio endpoint stopped unexpectedly");
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (m_impl->state.load(std::memory_order_acquire) == AudioCaptureState::Running &&
+        m_impl->config.selection == AudioEndpointSelection::FollowDefault &&
+        now >= m_impl->nextEndpointPoll) {
+        ma_device_id ignored{};
+        AudioDeviceInfo currentDefault;
+        const bool found = FindEndpoint(m_impl->context, m_impl->config, ignored, currentDefault);
+        AudioCaptureStatus status = GetStatus();
+        if (!found || currentDefault.id != status.endpointId) {
+            m_impl->CloseDevice();
+            std::string error;
+            if (!m_impl->OpenDevice(true, error)) m_impl->EnterRecovery(std::move(error));
+        } else {
+            m_impl->nextEndpointPoll = now +
+                std::chrono::milliseconds(m_impl->config.endpointPollMs);
+        }
+    }
+
+    if (m_impl->state.load(std::memory_order_acquire) == AudioCaptureState::Recovering &&
+        now >= m_impl->nextRetry) {
+        std::string error;
+        if (!m_impl->OpenDevice(true, error)) m_impl->EnterRecovery(std::move(error));
+    }
+}
+
+bool AudioCapture::StartDefault() {
+    AudioCaptureConfig config;
+    config.source = AudioCaptureSource::InputDevice;
+    config.selection = AudioEndpointSelection::FollowDefault;
+    if (!Start(config) || !IsRunning()) {
+        Stop();
+        return false;
+    }
+    return true;
+}
+
+bool AudioCapture::StartDeviceByName(const std::string& name) {
+    AudioCaptureConfig config;
+    config.source = AudioCaptureSource::InputDevice;
+    config.selection = AudioEndpointSelection::Fixed;
+    config.endpointName = name;
+    if (Start(config) && IsRunning()) return true;
+    std::cerr << "[AudioCapture] Input device '" << name
+              << "' not found. Falling back to the default input.\n";
+    Stop();
+    return StartDefault();
+}
+
+bool AudioCapture::Start(const std::string& deviceName, FrameCallback callback) {
+    AudioCaptureConfig config;
+    config.source = AudioCaptureSource::InputDevice;
+    if (deviceName.empty()) {
+        config.selection = AudioEndpointSelection::FollowDefault;
+        return StartInternal(config, std::move(callback)) && IsRunning();
+    }
+
+    config.selection = AudioEndpointSelection::Fixed;
+    config.endpointName = deviceName;
+    FrameCallback fallbackCallback = callback;
+    if (StartInternal(config, std::move(callback)) && IsRunning()) return true;
+    std::cerr << "[AudioCapture] Input device '" << deviceName
+              << "' not found. Falling back to the default input.\n";
+    config.selection = AudioEndpointSelection::FollowDefault;
+    config.endpointName.clear();
+    return StartInternal(config, std::move(fallbackCallback)) && IsRunning();
+}
+
+void AudioCapture::Stop() {
+    if (!m_impl) return;
+    m_impl->state.store(AudioCaptureState::Stopped, std::memory_order_release);
+    m_impl->CloseDevice();
+    if (m_impl->contextInitialized) {
+        ma_context_uninit(&m_impl->context);
+        m_impl->contextInitialized = false;
+    }
+    m_impl->legacyCallback = nullptr;
 }
 
 bool AudioCapture::IsRunning() const {
-    return m_impl && m_impl->running.load(std::memory_order_acquire);
+    return m_impl && m_impl->running.load(std::memory_order_acquire) &&
+        m_impl->state.load(std::memory_order_acquire) == AudioCaptureState::Running;
+}
+
+AudioCaptureState AudioCapture::GetState() const {
+    return m_impl ? m_impl->state.load(std::memory_order_acquire) : AudioCaptureState::Stopped;
+}
+
+AudioCaptureStatus AudioCapture::GetStatus() const {
+    AudioCaptureStatus status;
+    if (!m_impl) return status;
+    status.state = m_impl->state.load(std::memory_order_acquire);
+    status.sampleRate = m_impl->config.sampleRate;
+    status.channels = m_impl->config.channels;
+    status.streamGeneration = m_impl->streamGeneration.load(std::memory_order_relaxed);
+    status.droppedFrames = m_impl->droppedFrames.load(std::memory_order_relaxed);
+    status.discardedBacklogFrames =
+        m_impl->discardedBacklogFrames.load(std::memory_order_relaxed);
+    status.restartCount = m_impl->restartCount.load(std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(m_impl->statusMutex);
+    status.endpointId = m_impl->activeEndpoint.id;
+    status.endpointName = m_impl->activeEndpoint.name;
+    status.nativeChannels = m_impl->activeEndpoint.nativeChannels;
+    status.nativeSampleRate = m_impl->activeEndpoint.nativeSampleRate;
+    status.lastError = m_impl->lastError;
+    return status;
 }
 
 size_t AudioCapture::GetAvailableFrames() const {
-    return m_impl ? m_impl->ringBuf.GetAvailableFrames() : 0;
+    return m_impl && m_impl->ring ? m_impl->ring->GetAvailableFrames() : 0;
 }
 
 uint64_t AudioCapture::GetDroppedFrames() const {
     return m_impl ? m_impl->droppedFrames.load(std::memory_order_relaxed) : 0;
 }
 
-size_t AudioCapture::ReadInterleaved(float* dst, size_t frameCount) {
-    return m_impl ? m_impl->ringBuf.PopInterleaved(dst, frameCount) : 0;
+AudioReadResult AudioCapture::Read(float* destination, size_t frameCount) {
+    AudioReadResult result;
+    if (!m_impl || destination == nullptr || frameCount == 0 || !m_impl->ring) return result;
+    Poll();
+
+    const uint64_t loss = m_impl->lossSerial.load(std::memory_order_acquire);
+    if (loss != m_impl->observedLossSerial) {
+        m_impl->ring->Clear();
+        m_impl->observedLossSerial = loss;
+        m_impl->streamGeneration.fetch_add(1, std::memory_order_relaxed);
+        m_impl->nextReadSample = 0;
+        m_impl->pendingDiscontinuity = true;
+    }
+
+    const size_t available = m_impl->ring->GetAvailableFrames();
+    if (available > m_impl->config.maxBacklogFrames) {
+        const size_t discard = available - m_impl->config.retainedFrames;
+        m_impl->discardedBacklogFrames.fetch_add(
+            m_impl->ring->DiscardFrames(discard), std::memory_order_relaxed);
+        m_impl->streamGeneration.fetch_add(1, std::memory_order_relaxed);
+        m_impl->nextReadSample = 0;
+        m_impl->pendingDiscontinuity = true;
+    }
+
+    result.firstSample = m_impl->nextReadSample;
+    result.streamGeneration = m_impl->streamGeneration.load(std::memory_order_relaxed);
+    result.discontinuity = m_impl->pendingDiscontinuity;
+    m_impl->pendingDiscontinuity = false;
+    result.frames = m_impl->ring->PopInterleaved(destination, frameCount);
+    m_impl->nextReadSample += result.frames;
+    return result;
+}
+
+size_t AudioCapture::ReadInterleaved(float* destination, size_t frameCount) {
+    return Read(destination, frameCount).frames;
 }
 
 AudioLevels AudioCapture::GetCurrentLevels() const {
     if (!m_impl) return {};
     return AudioLevels{
-        m_impl->leftRms .load(std::memory_order_relaxed),
+        m_impl->leftRms.load(std::memory_order_relaxed),
         m_impl->rightRms.load(std::memory_order_relaxed),
-        m_impl->leftPeak .load(std::memory_order_relaxed),
+        m_impl->leftPeak.load(std::memory_order_relaxed),
         m_impl->rightPeak.load(std::memory_order_relaxed),
     };
 }
 
-AudioFrame AudioCapture::GetFrame(uint32_t timeout_ms) {
-    constexpr size_t kBlock = 480; // 10 ms @ 48 kHz
-    const auto deadline = std::chrono::steady_clock::now()
-                        + std::chrono::milliseconds(timeout_ms);
-
+AudioFrame AudioCapture::GetFrame(uint32_t timeoutMs) {
+    constexpr size_t kBlockFrames = 480;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeoutMs);
+    std::vector<float> interleaved(kBlockFrames * 2);
     while (std::chrono::steady_clock::now() < deadline) {
-        if (m_impl && m_impl->ringBuf.GetAvailableFrames() >= kBlock) {
-            std::vector<float> tmp(kBlock * 2);
-            m_impl->ringBuf.PopInterleaved(tmp.data(), kBlock);
-            AudioFrame f;
-            f.sample_rate = 48000;
-            f.left .resize(kBlock);
-            f.right.resize(kBlock);
-            for (size_t i = 0; i < kBlock; ++i) {
-                f.left [i] = tmp[i * 2];
-                f.right[i] = tmp[i * 2 + 1];
+        const AudioReadResult result = Read(interleaved.data(), kBlockFrames);
+        if (result.frames == kBlockFrames) {
+            AudioFrame frame;
+            frame.sample_rate = 48000;
+            frame.left.resize(kBlockFrames);
+            frame.right.resize(kBlockFrames);
+            for (size_t index = 0; index < kBlockFrames; ++index) {
+                frame.left[index] = interleaved[index * 2];
+                frame.right[index] = interleaved[index * 2 + 1];
             }
-            return f;
+            return frame;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     AudioFrame silence;
     silence.sample_rate = 48000;
-    silence.left .assign(kBlock, 0.f);
-    silence.right.assign(kBlock, 0.f);
+    silence.left.assign(kBlockFrames, 0.0f);
+    silence.right.assign(kBlockFrames, 0.0f);
     return silence;
 }
 

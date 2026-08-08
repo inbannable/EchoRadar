@@ -7,6 +7,8 @@
 
 namespace EchoRadar {
 
+STFTProcessor::STFTProcessor() : STFTProcessor(Config{}) {}
+
 STFTProcessor::STFTProcessor(const Config& cfg) : m_cfg(cfg) {
     ValidateConfig();
     m_window = MakeHannWindow(m_cfg.fft_size);

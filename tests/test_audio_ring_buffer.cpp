@@ -116,6 +116,21 @@ TEST(AudioRingBuffer, Clear) {
     EXPECT_EQ(rb.PopInterleaved(out, 2), 0u);
 }
 
+TEST(AudioRingBuffer, DiscardOldestKeepsNewestFrames) {
+    AudioRingBuffer rb(8);
+    const float input[] = {
+        1.f, 11.f, 2.f, 12.f, 3.f, 13.f, 4.f, 14.f, 5.f, 15.f,
+    };
+    ASSERT_EQ(rb.PushInterleaved(input, 5), 5u);
+    EXPECT_EQ(rb.DiscardFrames(3), 3u);
+    float output[4] = {};
+    ASSERT_EQ(rb.PopInterleaved(output, 2), 2u);
+    EXPECT_FLOAT_EQ(output[0], 4.f);
+    EXPECT_FLOAT_EQ(output[1], 14.f);
+    EXPECT_FLOAT_EQ(output[2], 5.f);
+    EXPECT_FLOAT_EQ(output[3], 15.f);
+}
+
 TEST(AudioRingBuffer, MultipleWrapArounds) {
     AudioRingBuffer rb(4);
     for (int round = 0; round < 10; ++round) {

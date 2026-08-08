@@ -17,6 +17,8 @@ float MelToHz(float mel) {
 
 } // namespace
 
+LogMelExtractor::LogMelExtractor() : LogMelExtractor(Config{}) {}
+
 LogMelExtractor::LogMelExtractor(const Config& config)
     : m_config(config),
       m_stft(STFTProcessor::Config{config.fftSize, config.hopSize, config.sampleRate}) {

@@ -3,6 +3,8 @@
 
 namespace EchoRadar {
 
+DirectionTracker::DirectionTracker() : DirectionTracker(Config{}) {}
+
 DirectionTracker::DirectionTracker(Config cfg) : m_cfg(cfg) {}
 
 DirectionEstimate DirectionTracker::Update(const DirectionEstimate& raw) {

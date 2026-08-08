@@ -12,6 +12,7 @@ add_executable(echoradar_tests
     test_dataset_manager.cpp
     test_asset_inventory.cpp
     test_recognition.cpp
+    test_v4_recognition.cpp
 )
 target_link_libraries(echoradar_tests
     PRIVATE

@@ -37,7 +37,8 @@ public:
         uint32_t sample_rate{48000};
     };
 
-    explicit STFTProcessor(const Config& cfg = {});
+    STFTProcessor();
+    explicit STFTProcessor(const Config& cfg);
     ~STFTProcessor();
 
     STFTProcessor(const STFTProcessor&)            = delete;

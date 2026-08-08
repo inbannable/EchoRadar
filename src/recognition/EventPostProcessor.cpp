@@ -5,6 +5,8 @@
 
 namespace EchoRadar {
 
+EventPostProcessor::EventPostProcessor() : EventPostProcessor(Config{}) {}
+
 EventPostProcessor::EventPostProcessor(Config config) : m_config(std::move(config)) {
     for (size_t i = 0; i < kSoundClassCount; ++i) {
         if (m_config.onThresholds[i] <= 0.0f || m_config.onThresholds[i] > 1.0f ||

@@ -18,7 +18,8 @@ public:
         uint32_t n_energy_bands{8}; // legacy compatibility path
     };
 
-    explicit FeatureExtractor(const Config& cfg = {});
+    FeatureExtractor();
+    explicit FeatureExtractor(const Config& cfg);
     ~FeatureExtractor() = default;
 
     /// Stateful extraction from one STFT frame.

@@ -70,6 +70,16 @@ size_t AudioRingBuffer::PopInterleaved(float* dst, size_t frameCount) {
     return n;
 }
 
+size_t AudioRingBuffer::DiscardFrames(size_t frameCount) {
+    const size_t r = m_readIdx.load(std::memory_order_relaxed);
+    const size_t w = m_writeIdx.load(std::memory_order_acquire);
+    const size_t n = std::min(frameCount, w - r);
+    if (n != 0) {
+        m_readIdx.store(r + n, std::memory_order_release);
+    }
+    return n;
+}
+
 size_t AudioRingBuffer::GetAvailableFrames() const {
     const size_t r = m_readIdx.load(std::memory_order_relaxed);
     const size_t w = m_writeIdx.load(std::memory_order_acquire);

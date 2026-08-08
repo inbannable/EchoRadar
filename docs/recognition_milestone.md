@@ -2,8 +2,10 @@
 
 > This document records the native v3 milestone. New model preparation and
 > CPU training use the v4 contract documented in
-> [`ml/TRAINING_V4.md`](../ml/TRAINING_V4.md); no v4 model has been trained or
-> integrated into the native application yet.
+> [`ml/TRAINING_V4.md`](../ml/TRAINING_V4.md). No v4 model has been trained or
+> promoted yet; the v4 runtime is now connected to the native application for
+> experimental candidate validation as documented in
+> [`audio_capture_v4_runtime.md`](audio_capture_v4_runtime.md).
 
 ## Implemented contracts
 

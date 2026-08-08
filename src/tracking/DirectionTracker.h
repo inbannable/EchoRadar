@@ -13,7 +13,8 @@ public:
         float initial_variance{100.0f}; // P₀ – initial estimation uncertainty
     };
 
-    explicit DirectionTracker(Config cfg = {});
+    DirectionTracker();
+    explicit DirectionTracker(Config cfg);
     ~DirectionTracker() = default;
 
     /// Feed a new (possibly noisy) estimate; returns smoothed result.

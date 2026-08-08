@@ -5,6 +5,7 @@ add_library(echoradar_audio STATIC
     AudioDeviceManager.cpp
     AudioDeviceManager.h
     AudioDeviceInfo.h
+    AudioStreamConsumer.h
     AudioHistoryBuffer.cpp
     AudioHistoryBuffer.h
     AudioRingBuffer.cpp

@@ -29,7 +29,8 @@ public:
         std::string modelVersion;
     };
 
-    explicit EventPostProcessor(Config config = {});
+    EventPostProcessor();
+    explicit EventPostProcessor(Config config);
 
     std::vector<SoundEvent> Process(const SoundProbabilities& probabilities);
     std::vector<SoundEvent> Flush(uint64_t endSample);

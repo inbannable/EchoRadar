@@ -2,6 +2,8 @@
 
 namespace EchoRadar {
 
+FootstepDetector::FootstepDetector() : FootstepDetector(Config{}) {}
+
 FootstepDetector::FootstepDetector(Config cfg) : m_cfg(cfg) {}
 
 void FootstepDetector::Process(const Spectrogram& spec, EventCallback cb) {

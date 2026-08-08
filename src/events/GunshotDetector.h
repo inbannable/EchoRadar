@@ -16,7 +16,8 @@ public:
 
     using EventCallback = std::function<void(const GunshotEvent&)>;
 
-    explicit GunshotDetector(Config cfg = {});
+    GunshotDetector();
+    explicit GunshotDetector(Config cfg);
     ~GunshotDetector() = default;
 
     /// Feed a new spectrogram frame; fires callback on detection.

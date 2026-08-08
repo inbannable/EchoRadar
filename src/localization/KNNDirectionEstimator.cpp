@@ -7,6 +7,8 @@
 
 namespace EchoRadar {
 
+KNNDirectionEstimator::KNNDirectionEstimator() : KNNDirectionEstimator(Config{}) {}
+
 KNNDirectionEstimator::KNNDirectionEstimator(Config cfg) : m_cfg(cfg) {
     if (cfg.k <= 0) throw std::invalid_argument("k must be > 0");
 }

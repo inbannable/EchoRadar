@@ -6,6 +6,8 @@
 
 namespace EchoRadar {
 
+FeatureExtractor::FeatureExtractor() : FeatureExtractor(Config{}) {}
+
 FeatureExtractor::FeatureExtractor(const Config& cfg) : m_cfg(cfg) {
     if (cfg.low_band_hz < 0.0f || cfg.mid_band_hz <= cfg.low_band_hz) {
         throw std::invalid_argument("Band boundaries must satisfy 0 <= low < mid");

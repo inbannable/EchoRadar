@@ -17,7 +17,8 @@ public:
         float opacity{0.85f};
     };
 
-    explicit OverlayRenderer(Config cfg = {});
+    OverlayRenderer();
+    explicit OverlayRenderer(Config cfg);
     ~OverlayRenderer();
 
     OverlayRenderer(const OverlayRenderer&)            = delete;

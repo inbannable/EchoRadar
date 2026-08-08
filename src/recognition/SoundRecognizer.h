@@ -31,7 +31,8 @@ public:
         double maxInferenceMs{0.0};
     };
 
-    SoundRecognizer(std::shared_ptr<ProbabilityModel> model, Config config = {});
+    explicit SoundRecognizer(std::shared_ptr<ProbabilityModel> model);
+    SoundRecognizer(std::shared_ptr<ProbabilityModel> model, Config config);
 
     std::vector<SoundEvent> PushInterleaved(const float* stereoSamples, size_t frameCount);
     std::vector<SoundEvent> Flush();

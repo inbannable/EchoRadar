@@ -36,6 +36,9 @@ public:
     /// @return Frames actually read (≤ frameCount; 0 when empty).
     size_t PopInterleaved(float* dst, size_t frameCount);
 
+    /// Discard up to @p frameCount oldest frames. Consumer thread only.
+    size_t DiscardFrames(size_t frameCount);
+
     /// Frames available to read right now.
     size_t GetAvailableFrames() const;
 

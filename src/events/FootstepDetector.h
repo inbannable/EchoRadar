@@ -19,7 +19,8 @@ public:
 
     using EventCallback = std::function<void(const FootstepEvent&)>;
 
-    explicit FootstepDetector(Config cfg = {});
+    FootstepDetector();
+    explicit FootstepDetector(Config cfg);
     ~FootstepDetector() = default;
 
     /// Feed a new spectrogram frame; fires callback on detection.

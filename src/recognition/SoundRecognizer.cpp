@@ -5,6 +5,9 @@
 
 namespace EchoRadar {
 
+SoundRecognizer::SoundRecognizer(std::shared_ptr<ProbabilityModel> model)
+    : SoundRecognizer(std::move(model), Config{}) {}
+
 SoundRecognizer::SoundRecognizer(std::shared_ptr<ProbabilityModel> model, Config config)
     : m_model(std::move(model)),
       m_config(std::move(config)),

@@ -15,7 +15,8 @@ public:
         float max_distance{1e9f}; // reject if nearest neighbour farther than this
     };
 
-    explicit KNNDirectionEstimator(Config cfg = {});
+    KNNDirectionEstimator();
+    explicit KNNDirectionEstimator(Config cfg);
     ~KNNDirectionEstimator() = default;
 
     // ── Training ─────────────────────────────────────────────────────────────

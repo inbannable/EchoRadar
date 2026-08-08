@@ -4,6 +4,8 @@
 
 namespace EchoRadar {
 
+GunshotDetector::GunshotDetector() : GunshotDetector(Config{}) {}
+
 GunshotDetector::GunshotDetector(Config cfg) : m_cfg(cfg) {}
 
 void GunshotDetector::Process(const Spectrogram& spec, EventCallback cb) {

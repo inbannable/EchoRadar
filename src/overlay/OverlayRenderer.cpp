@@ -6,6 +6,8 @@
 
 namespace EchoRadar {
 
+OverlayRenderer::OverlayRenderer() : OverlayRenderer(Config{}) {}
+
 OverlayRenderer::OverlayRenderer(Config cfg) : m_cfg(cfg) {}
 
 OverlayRenderer::~OverlayRenderer() {

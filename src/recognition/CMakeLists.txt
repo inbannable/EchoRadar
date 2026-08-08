@@ -15,6 +15,16 @@ set(ECHORADAR_RECOGNITION_SOURCES
     SoundRecognizer.cpp
     Evaluation.h
     Evaluation.cpp
+    V4RecognitionTypes.h
+    V4ProbabilityModel.h
+    V4ModelPackage.h
+    V4ModelPackage.cpp
+    StereoOnsetFeatureExtractor.h
+    StereoOnsetFeatureExtractor.cpp
+    V4OnnxModel.h
+    V4OnnxModel.cpp
+    V4Recognizer.h
+    V4Recognizer.cpp
 )
 
 add_library(echoradar_recognition STATIC ${ECHORADAR_RECOGNITION_SOURCES})

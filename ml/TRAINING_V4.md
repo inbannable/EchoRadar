@@ -165,8 +165,11 @@ support gates; that is a data-readiness result, not a tooling failure.
 
 ## Current boundary
 
-The repository is prepared through CPU training, ONNX export, calibration, and
-Python evaluation. No v4 model has been trained or promoted. Native C++ v4
-inference and application integration should be implemented only after a
-candidate passes the locked data and accuracy gates; legacy v1/v3 native paths
-remain unchanged meanwhile.
+The repository is prepared through CPU training, ONNX export, calibration,
+Python evaluation, matching native C++ v4 features/inference/post-processing,
+and experimental main-application integration. No v4 model has been trained or
+promoted. A first candidate may be loaded immediately from
+`models\v4-candidate` for capture, parity, latency, and real-game engineering
+validation; this does not waive the locked data and accuracy gates required for
+production promotion. Legacy v1/v3 diagnostic paths remain available and are
+not used as an implicit fallback by the main v4 runtime.

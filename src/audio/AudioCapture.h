@@ -8,25 +8,83 @@
 
 namespace EchoRadar {
 
+enum class AudioCaptureSource {
+    SystemLoopback,
+    InputDevice,
+};
+
+enum class AudioEndpointSelection {
+    FollowDefault,
+    Fixed,
+};
+
+enum class AudioCaptureState {
+    Stopped,
+    Starting,
+    Running,
+    Recovering,
+    Failed,
+    Unsupported,
+};
+
+struct AudioCaptureConfig {
+    AudioCaptureSource source{AudioCaptureSource::SystemLoopback};
+    AudioEndpointSelection selection{AudioEndpointSelection::FollowDefault};
+    std::string endpointId;
+    std::string endpointName;
+    uint32_t sampleRate{48000};
+    uint32_t channels{2};
+    size_t bufferFrames{48000};
+    size_t maxBacklogFrames{9600};   ///< 200 ms at 48 kHz
+    size_t retainedFrames{960};      ///< keep latest 20 ms after catch-up
+    uint32_t endpointPollMs{1000};
+};
+
+struct AudioReadResult {
+    size_t frames{0};
+    uint64_t firstSample{0};
+    uint64_t streamGeneration{0};
+    bool discontinuity{false};
+};
+
+struct AudioCaptureStatus {
+    AudioCaptureState state{AudioCaptureState::Stopped};
+    std::string endpointId;
+    std::string endpointName;
+    std::string lastError;
+    uint32_t sampleRate{48000};
+    uint32_t channels{2};
+    uint32_t nativeChannels{0};
+    uint32_t nativeSampleRate{0};
+    uint64_t streamGeneration{0};
+    uint64_t droppedFrames{0};
+    uint64_t discardedBacklogFrames{0};
+    uint64_t restartCount{0};
+};
+
 /// Real-time stereo audio capture via miniaudio.
 /// Output format: 48 kHz · stereo · float32.
 ///
-/// Pull model (recommended for DSP / monitoring):
+/// Pull model (recommended for the application and diagnostics):
 ///   AudioCapture cap;
-///   cap.StartDefault();                     // or StartDeviceByName("CABLE Output")
+///   cap.Start(AudioCaptureConfig{});         // Windows default-output loopback
 ///   while (running) {
 ///       float buf[960];                      // 10 ms @ 48 kHz stereo = 480 frames × 2 ch
-///       cap.ReadInterleaved(buf, 480);
+///       const auto read = cap.Read(buf, 480);
 ///       AudioLevels lvl = cap.GetCurrentLevels();
 ///   }
 ///   cap.Stop();
 ///
-/// Callback model (legacy — used by EchoRadarApp):
+/// Callback model (legacy input-device tools only):
 ///   cap.Start("", [](const AudioFrame& f){ ring.Push(f); });
+///
+/// Start(), Poll(), Read(), Stop(), and GetStatus() form one control/consumer
+/// thread. The miniaudio callback is the sole producer of the internal ring.
 class AudioCapture {
 public:
-    /// Internal ring buffer holds this many stereo frames (4 s @ 48 kHz).
-    static constexpr size_t kDefaultBufferFrames = 48000 * 4;
+    /// Default internal buffer is one second. The consumer catches up before it
+    /// can become a source of delayed recognition events.
+    static constexpr size_t kDefaultBufferFrames = 48000;
 
     /// Invoked (on the callback thread) for each decoded AudioFrame — legacy path.
     using FrameCallback = std::function<void(const AudioFrame&)>;
@@ -39,6 +97,14 @@ public:
 
     // ── Capture control ───────────────────────────────────────────────────────
 
+    /// Start an explicit capture route. A recoverable missing endpoint leaves
+    /// the object in Recovering state and returns true; Poll() will retry.
+    bool Start(const AudioCaptureConfig& config);
+
+    /// Handle endpoint changes and retry recoverable failures. Call from the
+    /// same consumer/control thread that calls Read().
+    void Poll();
+
     /// Open the system default input device.
     bool StartDefault();
 
@@ -46,7 +112,7 @@ public:
     /// Falls back to default if no match is found.
     bool StartDeviceByName(const std::string& name);
 
-    /// Legacy entry-point (EchoRadarApp compat).
+    /// Legacy entry-point for input-device tools.
     /// @p device_name empty → default device.
     /// @p callback non-null → called on the callback thread per captured AudioFrame.
     bool Start(const std::string& device_name = "", FrameCallback callback = nullptr);
@@ -55,6 +121,8 @@ public:
     void Stop();
 
     bool IsRunning() const;
+    AudioCaptureState GetState() const;
+    AudioCaptureStatus GetStatus() const;
 
     // ── Buffer access — pull model ────────────────────────────────────────────
 
@@ -68,6 +136,9 @@ public:
     /// @return Number of frames actually copied.
     size_t ReadInterleaved(float* dst, size_t frameCount);
 
+    /// Read PCM plus stream-continuity metadata.
+    AudioReadResult Read(float* dst, size_t frameCount);
+
     // ── Level monitoring ─────────────────────────────────────────────────────
 
     /// Per-channel RMS and peak computed inside the last audio callback block.
@@ -80,9 +151,7 @@ public:
     AudioFrame GetFrame(uint32_t timeout_ms = 100);
 
 private:
-    /// Shared implementation for all Start* variants.
-    /// @p deviceName nullptr → default device; non-null → partial name search.
-    bool StartInternal(const char* deviceName);
+    bool StartInternal(const AudioCaptureConfig& config, FrameCallback callback);
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
