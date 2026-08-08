@@ -29,10 +29,12 @@ class MixtureTest(unittest.TestCase):
             np.testing.assert_array_equal(first_audio.samples, second_audio.samples)
             self.assertEqual(first_timeline, second_timeline)
             self.assertEqual({event.sound_class for event in first_timeline},
-                             {"gunshot", "footstep", "mechanical"})
+                             {"gunshot", "footstep", "negative"})
             self.assertTrue(any(event.overlap for event in first_timeline))
             self.assertTrue(all(not event.seen_source for event in first_timeline))
             self.assertTrue(all(event.end_sample > event.onset_sample for event in first_timeline))
+            self.assertTrue(all(event.source_hint in ("self", "remote", "unknown")
+                                for event in first_timeline))
             by_class = {
                 name: sorted(event.onset_sample for event in first_timeline if event.sound_class == name)
                 for name in ("gunshot", "footstep")

@@ -50,41 +50,91 @@ def write_pcm16_wav(path: str | Path, audio: Audio) -> None:
         wav.writeframes(pcm.tobytes())
 
 
-def resample_linear(audio: Audio, target_rate: int = SAMPLE_RATE) -> Audio:
+def resample_bandlimited(audio: Audio, target_rate: int = SAMPLE_RATE) -> Audio:
+    """Resample PCM with an FFT band-limited interpolator.
+
+    Extracted CS2 assets are short, predominantly 44.1 kHz clips.  FFT
+    resampling is deterministic, removes the imaging produced by the previous
+    linear interpolator, and keeps the base package NumPy-only.  Runtime capture
+    is already 48 kHz and therefore takes the copy-only fast path.
+    """
     if audio.sample_rate == target_rate:
         return Audio(np.array(audio.samples, dtype=np.float32, copy=True), target_rate)
     if target_rate <= 0 or len(audio.samples) == 0:
         raise ValueError("sample rates and audio length must be positive")
     output_frames = int(round(len(audio.samples) * target_rate / audio.sample_rate))
-    positions = np.arange(output_frames, dtype=np.float64) * audio.sample_rate / target_rate
-    left = np.minimum(positions.astype(np.int64), len(audio.samples) - 1)
-    right = np.minimum(left + 1, len(audio.samples) - 1)
-    fraction = (positions - left).astype(np.float32)[:, None]
-    output = audio.samples[left] + (audio.samples[right] - audio.samples[left]) * fraction
+    # Guard samples prevent the FFT's periodic boundary from wrapping a clip's
+    # decay into its beginning, which would corrupt measured onset offsets.
+    guard = min(1024, max(32, len(audio.samples) // 4))
+    source = np.pad(audio.samples.astype(np.float64, copy=False), ((guard, guard), (0, 0)))
+    input_frames = len(source)
+    padded_output_frames = int(round(input_frames * target_rate / audio.sample_rate))
+    spectrum = np.fft.rfft(source, axis=0)
+    output_spectrum = np.zeros((padded_output_frames // 2 + 1, audio.channels), dtype=np.complex128)
+    copied = min(len(spectrum), len(output_spectrum))
+    output_spectrum[:copied] = spectrum[:copied]
+
+    # A real-valued Nyquist bin represents both positive and negative
+    # frequencies.  Split/merge it when the shorter transform has even length.
+    shorter = min(input_frames, padded_output_frames)
+    if shorter % 2 == 0 and copied > shorter // 2:
+        nyquist = shorter // 2
+        if padded_output_frames > input_frames:
+            output_spectrum[nyquist] *= 0.5
+        elif padded_output_frames < input_frames:
+            output_spectrum[nyquist] *= 2.0
+    output = np.fft.irfft(output_spectrum, n=padded_output_frames, axis=0)
+    output *= padded_output_frames / input_frames
+    trim_start = int(round(guard * target_rate / audio.sample_rate))
+    output = output[trim_start:trim_start + output_frames]
     return Audio(output.astype(np.float32), target_rate)
+
+
+# Source compatibility for callers outside the ML package.  The implementation
+# is intentionally no longer linear.
+resample_linear = resample_bandlimited
 
 
 def to_stereo_48k(audio: Audio) -> Audio:
     samples = audio.samples
     if audio.channels == 1:
         samples = np.repeat(samples, 2, axis=1)
-    return resample_linear(Audio(samples, audio.sample_rate), SAMPLE_RATE)
+    return resample_bandlimited(Audio(samples, audio.sample_rate), SAMPLE_RATE)
 
 
 def rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(samples, dtype=np.float64)))) if samples.size else 0.0
 
 
-def trim_activity(audio: Audio, before_seconds: float = 0.02, after_seconds: float = 0.20) -> Audio:
+def activity_bounds(audio: Audio, before_seconds: float = 0.02,
+                    after_seconds: float = 0.20) -> tuple[int, int, int]:
+    """Return ``(trim_start, trim_end, audible_onset)`` in input samples."""
     envelope = np.max(np.abs(audio.samples), axis=1)
     if not len(envelope):
-        return audio
+        return 0, 0, 0
     threshold = max(0.005, float(envelope.max()) * 0.02)
     active = np.flatnonzero(envelope >= threshold)
     if not len(active):
-        return audio
+        return 0, len(audio.samples), 0
     before = int(round(before_seconds * audio.sample_rate))
     after = int(round(after_seconds * audio.sample_rate))
     start = max(0, int(active[0]) - before)
     end = min(len(audio.samples), int(active[-1]) + after + 1)
-    return Audio(audio.samples[start:end].copy(), audio.sample_rate)
+    return start, end, int(active[0])
+
+
+def trim_activity_with_offset(
+    audio: Audio, before_seconds: float = 0.02, after_seconds: float = 0.20,
+) -> tuple[Audio, int]:
+    """Trim silence while preserving the exact audible-onset offset.
+
+    The old corpus generator retained 20 ms of pre-roll and then labeled the
+    beginning of that pre-roll as the event onset.  Returning the offset makes
+    that impossible for new callers.
+    """
+    start, end, audible = activity_bounds(audio, before_seconds, after_seconds)
+    return Audio(audio.samples[start:end].copy(), audio.sample_rate), max(0, audible - start)
+
+
+def trim_activity(audio: Audio, before_seconds: float = 0.02, after_seconds: float = 0.20) -> Audio:
+    return trim_activity_with_offset(audio, before_seconds, after_seconds)[0]

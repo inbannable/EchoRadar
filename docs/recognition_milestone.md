@@ -1,5 +1,10 @@
 # CS2 Sound Recognition Milestone
 
+> This document records the native v3 milestone. New model preparation and
+> CPU training use the v4 contract documented in
+> [`ml/TRAINING_V4.md`](../ml/TRAINING_V4.md); no v4 model has been trained or
+> integrated into the native application yet.
+
 ## Implemented contracts
 
 The recognition layer exposes three user-facing classes: `Gunshot`, `Footstep`, and `Mechanical`. `SoundRecognizer` accepts streaming 48 kHz interleaved stereo float PCM and returns zero or more overlapping `SoundEvent` objects containing class, onset/end sample, confidence, and model version.

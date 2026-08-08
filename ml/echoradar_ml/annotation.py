@@ -11,8 +11,8 @@ from .audio import Audio, load_pcm_wav, to_stereo_48k, write_pcm16_wav
 from .features import log_mel
 
 
-COLORS = {"gunshot": "#ff5555", "footstep": "#55dd88", "mechanical": "#55aaff"}
-DURATIONS = {"gunshot": 0.05, "footstep": 0.05, "mechanical": 0.05}
+COLORS = {"gunshot": "#ff5555", "footstep": "#55dd88"}
+DURATIONS = {"gunshot": 0.05, "footstep": 0.05}
 
 
 def _load_jsonl(path: Path | None) -> list[dict]:
@@ -23,6 +23,8 @@ def _load_jsonl(path: Path | None) -> list[dict]:
         if not line:
             continue
         event = json.loads(line)
+        if "class" not in event and event.get("sound_class") in CLASS_NAMES:
+            event["class"] = event.pop("sound_class")
         if event.get("class") in CLASS_NAMES:
             events.append(event)
     return events
@@ -58,8 +60,10 @@ class TimelineReviewer:
         self.root.bind("<space>", self._play)
         self.root.bind("1", lambda event: self._add("gunshot"))
         self.root.bind("2", lambda event: self._add("footstep"))
-        self.root.bind("3", lambda event: self._add("mechanical"))
         self.root.bind("u", self._toggle_uncertain)
+        self.root.bind("l", lambda event: self._set_source("self"))
+        self.root.bind("r", lambda event: self._set_source("remote"))
+        self.root.bind("n", lambda event: self._set_source("unknown"))
         self.root.bind("<Delete>", self._delete_nearest)
         self.root.bind("<BackSpace>", self._delete_nearest)
         self.root.bind("s", lambda event: self.save())
@@ -95,7 +99,8 @@ class TimelineReviewer:
         end = min(len(self.audio.samples), self.cursor + int(DURATIONS[name] * SAMPLE_RATE))
         self.events.append({
             "class": name, "onset_sample": self.cursor, "end_sample": end,
-            "source": "manual", "reviewed": True, "uncertain": False,
+            "source": "manual", "source_hint": "unknown", "reviewed": True,
+            "uncertain": False, "scene_mode": "unknown",
         })
         self.events.sort(key=lambda event: int(event["onset_sample"]))
         self.draw()
@@ -104,6 +109,13 @@ class TimelineReviewer:
         index = self._nearest()
         if index is not None:
             self.events[index]["uncertain"] = not bool(self.events[index].get("uncertain", False))
+            self.events[index]["reviewed"] = True
+            self.draw()
+
+    def _set_source(self, source_hint: str):
+        index = self._nearest()
+        if index is not None:
+            self.events[index]["source_hint"] = source_hint
             self.events[index]["reviewed"] = True
             self.draw()
 
@@ -171,13 +183,14 @@ class TimelineReviewer:
             x = (onset - start) * width / max(1, end - start)
             color = "#ffee55" if event.get("uncertain") else COLORS[event["class"]]
             canvas.create_line(x, 0, x, 610, fill=color, width=2)
-            canvas.create_text(x + 3, 205, text=event["class"], fill=color, anchor="sw")
+            source = event.get("source_hint", "unknown")
+            canvas.create_text(x + 3, 205, text=f"{event['class']}:{source}", fill=color, anchor="sw")
         cursor_x = (self.cursor - start) * width / max(1, end - start)
         canvas.create_line(cursor_x, 0, cursor_x, 610, fill="white", width=2)
         self.status.set(
             f"{self.cursor / SAMPLE_RATE:.3f}s / {len(self.audio.samples) / SAMPLE_RATE:.1f}s | "
-            f"events={len(self.events)} | 1 gunshot  2 footstep  3 mechanical  U uncertain  "
-            "Delete remove  Space play  S save  Shift+Arrow fast"
+            f"events={len(self.events)} | 1 gunshot  2 footstep  L self  R remote  N unknown  "
+            "U uncertain  Delete remove  Space play  S save  Shift+Arrow fast"
         )
 
     def save(self):

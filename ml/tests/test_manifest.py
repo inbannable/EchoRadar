@@ -1,6 +1,10 @@
 import unittest
 
-from echoradar_ml.manifest import Asset, assert_no_leakage, grouped_split
+from pathlib import Path
+
+from echoradar_ml.manifest import (
+    Asset, _classify_relative_path, assert_no_leakage, grouped_split,
+)
 
 
 class ManifestTest(unittest.TestCase):
@@ -25,6 +29,16 @@ class ManifestTest(unittest.TestCase):
         duplicate = Asset("b", "b.wav", "gunshot", "g", "hash", "a.wav", True)
         result = grouped_split([original, duplicate])
         self.assertEqual([asset.asset_id for asset in result], ["a"])
+
+    def test_python_inventory_matches_critical_native_classification_rules(self):
+        self.assertEqual(_classify_relative_path(Path("weapons/negev/negev_clean_01.wav"))[0:2],
+                         ("gunshot", "weapon_report"))
+        self.assertEqual(_classify_relative_path(Path("weapons/m4a1/m4a1_silencer_on.wav"))[0:2],
+                         ("mechanical", "attachment"))
+        self.assertEqual(_classify_relative_path(Path("weapons/elite/elite_sideback.wav"))[0:2],
+                         ("mechanical", "weapon_action"))
+        self.assertEqual(_classify_relative_path(Path("player/footsteps/concrete_01.wav"))[0],
+                         "footstep")
 
 
 if __name__ == "__main__":

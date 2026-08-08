@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
-from .manifest import assert_no_leakage, grouped_split, read_inventory, write_split_manifest
-from .mixtures import generate_from_manifest
-from .training import train_and_export
+from .annotation import review_timeline
 from .evaluation import evaluate_sessions
 from .inference import check_onnx_parity
-from .annotation import review_timeline
+from .manifest import (
+    assert_no_leakage, grouped_split, manifest_summary, prepare_onset_offsets,
+    load_split_manifest, read_inventory, scan_asset_tree, write_split_manifest,
+)
+from .mixtures import generate_from_manifest
+from .sessions import audit_session_corpus, import_real_session, training_readiness
 from .spatial import SteamAudioRenderer
+from .training import prepare_feature_cache, train_and_export
 
 
 def _prefixes(directory: Path, pattern: str) -> list[Path]:
@@ -17,32 +22,38 @@ def _prefixes(directory: Path, pattern: str) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="EchoRadar CS2 recognition pipeline")
+    parser = argparse.ArgumentParser(description="EchoRadar v4 CPU sound-onset training pipeline")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    split = commands.add_parser("split", help="create a leakage-safe grouped split")
+    prepare = commands.add_parser(
+        "prepare-assets", help="scan, onset-align, group-split, and write a reviewable v4 asset manifest"
+    )
+    prepare.add_argument("--asset-root", required=True, type=Path)
+    prepare.add_argument("--output", required=True, type=Path)
+    prepare.add_argument("--seed", type=int, default=20260720)
+
+    split = commands.add_parser("split", help="convert an existing inventory to the grouped v4 split")
     split.add_argument("--inventory", required=True, type=Path)
+    split.add_argument("--asset-root", type=Path,
+                       help="measure exact 48 kHz onset offsets; strongly recommended")
     split.add_argument("--output", required=True, type=Path)
     split.add_argument("--seed", type=int, default=20260720)
 
-    mixtures = commands.add_parser("mixtures", help="generate deterministic continuous sessions")
+    mixtures = commands.add_parser("mixtures", help="generate deterministic v4 continuous sessions")
     mixtures.add_argument("--manifest", required=True, type=Path)
     mixtures.add_argument("--asset-root", required=True, type=Path)
     mixtures.add_argument("--output", required=True, type=Path)
     mixtures.add_argument("--split", choices=("train", "dev", "test"), required=True)
     mixtures.add_argument("--stratum", choices=("simple", "complex"), required=True)
     mixtures.add_argument("--count", type=int, default=10)
-    mixtures.add_argument("--duration", type=float, default=60.0)
+    mixtures.add_argument("--duration", type=float, default=30.0)
     mixtures.add_argument("--seed", type=int, default=20260720)
-    mixtures.add_argument("--steam-audio-renderer", type=Path,
-                          help="pinned v4.8.1 offline renderer; absent means self-like centered audio only")
+    mixtures.add_argument("--steam-audio-renderer", type=Path)
     mixtures.add_argument("--ambient-only-fraction", type=float, default=0.25)
     mixtures.add_argument("--session-gain-min-db", type=float, default=-30.0)
     mixtures.add_argument("--session-gain-max-db", type=float, default=6.0)
 
-    corpus = commands.add_parser(
-        "corpus", help="generate the locked v3 160/40/40 spatial session corpus"
-    )
+    corpus = commands.add_parser("corpus", help="generate the locked 160/40/40 v4 spatial corpus")
     corpus.add_argument("--manifest", required=True, type=Path)
     corpus.add_argument("--asset-root", required=True, type=Path)
     corpus.add_argument("--output", required=True, type=Path)
@@ -53,20 +64,45 @@ def main(argv: list[str] | None = None) -> int:
     corpus.add_argument("--test-count", type=int, default=40)
     corpus.add_argument("--seed", type=int, default=20260720)
 
-    train = commands.add_parser("train", help="train and export the compact causal ONNX model")
+    real = commands.add_parser("import-real", help="normalize one reviewed gameplay recording")
+    real.add_argument("--wav", required=True, type=Path)
+    real.add_argument("--labels", required=True, type=Path)
+    real.add_argument("--output", required=True, type=Path)
+    real.add_argument("--split", choices=("train", "dev", "test"), required=True)
+    real.add_argument("--session-id", required=True)
+    real.add_argument("--map", required=True, dest="map_name")
+    real.add_argument("--capture-day", required=True)
+    real.add_argument("--audio-settings", required=True)
+    real.add_argument("--label-sample-rate", type=int, default=48000,
+                      help="sample coordinates used by JSONL labels; annotate writes 48000")
+
+    audit = commands.add_parser("audit", help="report corpus support and locked-data readiness")
+    audit.add_argument("--sessions", required=True, type=Path)
+    audit.add_argument("--output", type=Path)
+    audit.add_argument("--require-locked", action="store_true")
+
+    cache = commands.add_parser("cache", help="precompute disk-backed v4 features before CPU training")
+    cache.add_argument("--sessions", required=True, type=Path)
+    cache.add_argument("--output", required=True, type=Path)
+
+    train = commands.add_parser("train", help="train/export the compact v4 model on CPU")
     train.add_argument("--sessions", required=True, type=Path)
     train.add_argument("--output", required=True, type=Path)
+    train.add_argument("--cache", type=Path)
     train.add_argument("--epochs", type=int, default=20)
+    train.add_argument("--batch-size", type=int, default=64)
+    train.add_argument("--threads", type=int, default=0,
+                       help="PyTorch CPU threads; zero keeps its platform default")
+    train.add_argument("--resume", type=Path)
     train.add_argument("--seed", type=int, default=20260720)
 
-    evaluate = commands.add_parser("evaluate", help="run locked synthetic sessions through ONNX Runtime")
+    evaluate = commands.add_parser("evaluate", help="run locked sessions through ONNX Runtime")
     evaluate.add_argument("--sessions", required=True, type=Path)
     evaluate.add_argument("--model", required=True, type=Path)
     evaluate.add_argument("--output", required=True, type=Path)
-    evaluate.add_argument("--require-gates", action="store_true",
-                          help="return failure unless every locked v3 synthetic gate passes")
+    evaluate.add_argument("--require-gates", action="store_true")
 
-    parity = commands.add_parser("parity", help="compare exported ONNX output with a PyTorch fixture")
+    parity = commands.add_parser("parity", help="compare exported ONNX and PyTorch outputs")
     parity.add_argument("--model", required=True, type=Path)
     parity.add_argument("--fixture", required=True, type=Path)
 
@@ -76,15 +112,33 @@ def main(argv: list[str] | None = None) -> int:
     annotate.add_argument("--predictions", type=Path)
 
     args = parser.parse_args(argv)
+    if args.command == "prepare-assets":
+        assets = scan_asset_tree(args.asset_root)
+        split_assets = grouped_split(assets, args.seed)
+        assert_no_leakage(split_assets)
+        write_split_manifest(args.output, split_assets, args.seed)
+        write_split_manifest(
+            args.output.with_suffix(".review.csv"),
+            [asset for asset in split_assets if asset.review_status == "review"], args.seed,
+        )
+        summary = manifest_summary(assets)
+        args.output.with_suffix(".summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0
     if args.command == "split":
-        assets = grouped_split(read_inventory(args.inventory), args.seed)
+        assets = read_inventory(args.inventory)
+        if args.asset_root:
+            assets = prepare_onset_offsets(assets, args.asset_root)
+        assets = grouped_split(assets, args.seed)
         assert_no_leakage(assets)
         write_split_manifest(args.output, assets, args.seed)
-        counts: dict[tuple[str, str], int] = {}
-        for asset in assets:
-            counts[(asset.split, asset.label)] = counts.get((asset.split, asset.label), 0) + 1
-        for key in sorted(counts):
-            print(f"{key[0]:5s} {key[1]:10s} {counts[key]:4d}")
+        write_split_manifest(
+            args.output.with_suffix(".review.csv"),
+            [asset for asset in assets if asset.review_status == "review"], args.seed,
+        )
+        print(json.dumps(manifest_summary(assets), indent=2, sort_keys=True))
         return 0
     if args.command == "mixtures":
         renderer = SteamAudioRenderer(args.steam_audio_renderer) if args.steam_audio_renderer else None
@@ -98,46 +152,81 @@ def main(argv: list[str] | None = None) -> int:
         print(f"generated {len(paths)} sessions in {args.output}")
         return 0
     if args.command == "corpus":
+        unresolved = [
+            asset.relative_path for asset in load_split_manifest(args.manifest)
+            if asset.review_status == "review"
+        ]
+        if unresolved:
+            print("WARNING: unresolved asset review rows will be included:")
+            for path in unresolved:
+                print(f"  {path}")
         renderer = SteamAudioRenderer(args.steam_audio_renderer)
         total = 0
         for split_index, (split_name, count) in enumerate((
-            ("train", args.train_count), ("dev", args.dev_count), ("test", args.test_count)
+            ("train", args.train_count), ("dev", args.dev_count), ("test", args.test_count),
         )):
             if count <= 0:
                 parser.error("corpus split counts must be positive")
             simple_count = (count + 1) // 2
             for stratum_index, (stratum, stratum_count) in enumerate((
-                ("simple", simple_count), ("complex", count - simple_count)
+                ("simple", simple_count), ("complex", count - simple_count),
             )):
-                if stratum_count == 0:
+                if not stratum_count:
                     continue
-                paths = generate_from_manifest(
+                total += len(generate_from_manifest(
                     args.manifest, args.asset_root, args.output, split_name, stratum,
                     stratum_count, args.duration,
                     args.seed + split_index * 100_000 + stratum_index * 10_000,
                     renderer=renderer, ambient_only_fraction=0.25,
                     session_gain_min_db=-30.0, session_gain_max_db=6.0,
-                )
-                total += len(paths)
-        print(f"generated {total} locked v3 sessions in {args.output}")
+                ))
+        print(f"generated {total} locked v4 sessions in {args.output}")
+        return 0
+    if args.command == "import-real":
+        prefix = import_real_session(
+            args.wav, args.labels, args.output, args.split, args.session_id,
+            args.map_name, args.capture_day, args.audio_settings, args.label_sample_rate,
+        )
+        print(f"imported {prefix}")
+        return 0
+    if args.command == "audit":
+        report = audit_session_corpus(args.sessions)
+        readiness = training_readiness(report)
+        result = {**report, "readiness": readiness, "locked_ready": all(readiness.values())}
+        text = json.dumps(result, indent=2, sort_keys=True) + "\n"
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(text, encoding="utf-8")
+        print(text, end="")
+        return 1 if args.require_locked and not result["locked_ready"] else 0
+    if args.command == "cache":
+        train_prefixes = _prefixes(args.sessions, "train_*.wav")
+        dev_prefixes = _prefixes(args.sessions, "dev_*.wav")
+        if not train_prefixes or not dev_prefixes:
+            parser.error("--sessions must contain train_*.wav and dev_*.wav")
+        prepare_feature_cache(train_prefixes, args.output / "train", (-24.0, -12.0, 0.0))
+        prepare_feature_cache(dev_prefixes, args.output / "dev", (0.0,))
+        print(f"feature cache ready: {args.output}")
         return 0
     if args.command == "train":
         train_prefixes = _prefixes(args.sessions, "train_*.wav")
         dev_prefixes = _prefixes(args.sessions, "dev_*.wav")
         if not train_prefixes or not dev_prefixes:
             parser.error("--sessions must contain train_*.wav and dev_*.wav")
-        package = train_and_export(train_prefixes, dev_prefixes, args.output, args.epochs, args.seed)
+        package = train_and_export(
+            train_prefixes, dev_prefixes, args.output, args.epochs, args.seed,
+            cache_dir=args.cache, threads=args.threads, batch_size=args.batch_size,
+            resume=args.resume,
+        )
         print(f"exported model package: {package}")
         return 0
     if args.command == "evaluate":
         report = evaluate_sessions(args.sessions, args.model, args.output)
-        for stratum, values in report["strata"].items():
-            print(stratum)
-            for name in ("gunshot", "footstep", "mechanical"):
-                metrics = values[name]
-                print(f"  {name:10s} precision={metrics['precision']:.3f} recall={metrics['recall']:.3f} "
-                      f"f1={metrics['f1']:.3f} fp/min={metrics['false_alerts_per_minute']:.2f}")
-        print(f"v3 synthetic acceptance: {'PASS' if report['acceptance_passed'] else 'FAIL'}")
+        for name, metrics in report["overall"].items():
+            print(f"{name:10s} precision={metrics['precision']:.3f} recall={metrics['recall']:.3f} "
+                  f"fp/min={metrics['false_alerts_per_minute']:.2f} "
+                  f"p95_latency={metrics['p95_delivery_latency_ms']:.1f}ms")
+        print(f"v4 acceptance: {'PASS' if report['acceptance_passed'] else 'FAIL'}")
         return 1 if args.require_gates and not report["acceptance_passed"] else 0
     if args.command == "parity":
         error = check_onnx_parity(args.model, args.fixture)

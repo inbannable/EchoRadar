@@ -3,7 +3,10 @@ import unittest
 import numpy as np
 
 from echoradar_ml import FFT_SIZE, MEL_BINS, SAMPLE_RATE
-from echoradar_ml.features import log_mel, stereo_mel_energy, stereo_pcen, stereo_pcen_from_energy
+from echoradar_ml.features import (
+    log_mel, scene_activity, stereo_mel_energy, stereo_onset_features, stereo_pcen,
+    stereo_pcen_from_energy,
+)
 
 
 class FeaturesTest(unittest.TestCase):
@@ -45,6 +48,21 @@ class FeaturesTest(unittest.TestCase):
         expected = stereo_pcen(samples * np.float32(10.0 ** (-12.0 / 20.0)))
         actual = stereo_pcen_from_energy(stereo_mel_energy(samples), -12.0)
         np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
+
+    def test_v4_spatial_planes_transform_predictably_on_channel_swap(self):
+        times = np.arange(FFT_SIZE * 3, dtype=np.float32) / SAMPLE_RATE
+        left = np.sin(2 * np.pi * 900 * times).astype(np.float32)
+        right = 0.5 * np.roll(left, 3)
+        features = stereo_onset_features(np.column_stack((left, right)))
+        swapped = stereo_onset_features(np.column_stack((right, left)))
+        self.assertEqual(features.shape[1:], (5, MEL_BINS))
+        np.testing.assert_allclose(features[:, :2], swapped[:, :2], atol=2e-5, rtol=2e-5)
+        np.testing.assert_allclose(features[:, 2], -swapped[:, 2], atol=2e-5, rtol=2e-5)
+        np.testing.assert_allclose(features[:, 3], swapped[:, 3], atol=2e-5, rtol=2e-5)
+        np.testing.assert_allclose(features[:, 4], -swapped[:, 4], atol=2e-5, rtol=2e-5)
+        activity = scene_activity(features)
+        self.assertEqual(activity.shape, (len(features),))
+        self.assertTrue(np.all((activity >= 0.0) & (activity <= 1.0)))
 
 
 if __name__ == "__main__":

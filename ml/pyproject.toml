@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echoradar-ml"
-version = "0.1.0"
-description = "Deterministic CS2 sound-event dataset and model pipeline for EchoRadar"
+version = "0.2.0"
+description = "CPU-ready CS2 streaming sound-onset dataset, training, calibration, and evaluation pipeline"
 requires-python = ">=3.11"
 dependencies = ["numpy>=2.0,<3"]
 
