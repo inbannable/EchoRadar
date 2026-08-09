@@ -47,6 +47,9 @@ public:
     void OnStreamReset(uint64_t streamGeneration) override;
 
     const V4ModelOutput& LastOutput() const { return m_lastOutput; }
+    float LastSceneActivity() const {
+        return m_haveLastFeature ? m_lastFeature.sceneActivity : 0.0f;
+    }
     const RuntimeStats& Stats() const { return m_stats; }
     const std::string& LastError() const { return m_lastError; }
     uint64_t StreamGeneration() const { return m_streamGeneration; }

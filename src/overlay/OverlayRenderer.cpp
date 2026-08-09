@@ -328,8 +328,25 @@ void OverlayRenderer::PushAudioClock(uint64_t sample, uint64_t streamGeneration,
         m_v4Events.clear();
         m_streamGeneration = streamGeneration;
         m_currentSample = 0;
+        m_audioLevels = {};
+        m_v4Scores = {};
+        m_sceneActivity = 0.0f;
+        m_haveV4Scores = false;
     }
     m_currentSample = std::max(m_currentSample, sample);
+}
+
+void OverlayRenderer::PushAudioLevels(const AudioLevels& levels) {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_audioLevels = levels;
+}
+
+void OverlayRenderer::PushV4Scores(const V4ModelOutput& output, float sceneActivity,
+                                    bool hasOutput) {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_v4Scores = output;
+    m_sceneActivity = std::clamp(sceneActivity, 0.0f, 1.0f);
+    m_haveV4Scores = hasOutput;
 }
 
 void OverlayRenderer::Render() {
@@ -366,11 +383,19 @@ void OverlayRenderer::DrawUi() {
     std::deque<V4SoundEvent> events;
     uint64_t currentSample = 0;
     uint64_t streamGeneration = 0;
+    AudioLevels audioLevels;
+    V4ModelOutput v4Scores;
+    float sceneActivity = 0.0f;
+    bool haveV4Scores = false;
     {
         std::lock_guard<std::mutex> lock(m_dataMutex);
         events = m_v4Events;
         currentSample = m_currentSample;
         streamGeneration = m_streamGeneration;
+        audioLevels = m_audioLevels;
+        v4Scores = m_v4Scores;
+        sceneActivity = m_sceneActivity;
+        haveV4Scores = m_haveV4Scores;
     }
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -407,6 +432,8 @@ void OverlayRenderer::DrawUi() {
                            "Recognition paused: %s", m_cfg.recognition_error.c_str());
     }
 
+    DrawLiveDiagnostics(audioLevels, v4Scores, sceneActivity, haveV4Scores);
+
     if (ImGui::Button("Clear chart")) {
         std::lock_guard<std::mutex> lock(m_dataMutex);
         m_v4Events.clear();
@@ -432,6 +459,66 @@ void OverlayRenderer::DrawUi() {
         ImGui::EndTable();
     }
     ImGui::End();
+}
+
+void OverlayRenderer::DrawLiveDiagnostics(const AudioLevels& levels,
+                                           const V4ModelOutput& scores,
+                                           float sceneActivity, bool haveScores) {
+    const auto dbFs = [](float amplitude) {
+        if (!std::isfinite(amplitude) || amplitude <= 1.0e-6f) return -120.0f;
+        return std::max(-120.0f, 20.0f * std::log10(amplitude));
+    };
+    const float leftRmsDb = dbFs(levels.leftRms);
+    const float rightRmsDb = dbFs(levels.rightRms);
+    const float leftPeakDb = dbFs(levels.leftPeak);
+    const float rightPeakDb = dbFs(levels.rightPeak);
+    const float cutoff = m_cfg.v4_tuning
+        ? m_cfg.v4_tuning->Snapshot().sceneActivityCutoff : 0.5f;
+
+    if (ImGui::BeginTable("LiveDiagnostics", 2,
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV,
+                          ImVec2(0.0f, 126.0f))) {
+        ImGui::TableSetupColumn("Live audio level", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Live recognition scores", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Current sound-level score");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(scene activity)");
+        if (haveScores) {
+            char sceneOverlay[16]{};
+            std::snprintf(sceneOverlay, sizeof(sceneOverlay), "%.3f", sceneActivity);
+            ImGui::ProgressBar(sceneActivity, ImVec2(-FLT_MIN, 0.0f),
+                               sceneOverlay);
+            ImGui::Text("Scene: %s  |  cutoff %.3f",
+                        sceneActivity >= cutoff ? "BUSY" : "QUIET", cutoff);
+        } else {
+            ImGui::TextDisabled("Waiting for V4 feature/inference output...");
+        }
+        ImGui::Text("RMS   L %6.1f dBFS   R %6.1f dBFS", leftRmsDb, rightRmsDb);
+        ImGui::Text("Peak  L %6.1f dBFS   R %6.1f dBFS", leftPeakDb, rightPeakDb);
+
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Current onset scores");
+        if (haveScores) {
+            const float gunshot = std::clamp(scores.onsetProbabilities[0], 0.0f, 1.0f);
+            const float footstep = std::clamp(scores.onsetProbabilities[1], 0.0f, 1.0f);
+            char gunshotOverlay[16]{};
+            char footstepOverlay[16]{};
+            std::snprintf(gunshotOverlay, sizeof(gunshotOverlay), "%.3f", gunshot);
+            std::snprintf(footstepOverlay, sizeof(footstepOverlay), "%.3f", footstep);
+            ImGui::TextUnformatted("Gunshot");
+            ImGui::SameLine();
+            ImGui::ProgressBar(gunshot, ImVec2(-FLT_MIN, 0.0f), gunshotOverlay);
+            ImGui::TextUnformatted("Footstep");
+            ImGui::SameLine();
+            ImGui::ProgressBar(footstep, ImVec2(-FLT_MIN, 0.0f), footstepOverlay);
+            ImGui::TextDisabled("Scores are live model output before peak/event gating.");
+        } else {
+            ImGui::TextDisabled("V4 model scores are unavailable.");
+        }
+        ImGui::EndTable();
+    }
 }
 
 void OverlayRenderer::DrawEventTimeline(const std::deque<V4SoundEvent>& events,

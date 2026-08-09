@@ -128,6 +128,7 @@ void EchoRadarApp::DSPLoop() {
         if (m_overlay) {
             m_overlay->PushAudioClock(read.firstSample + read.frames,
                                       read.streamGeneration, read.discontinuity);
+            m_overlay->PushAudioLevels(m_audio->GetCurrentLevels());
         }
         const AudioCaptureStatus status = m_audio->GetStatus();
         if (status.state != previousState) {
@@ -156,6 +157,12 @@ void EchoRadarApp::DSPLoop() {
                 read.streamGeneration,
             };
             m_recognizer->OnAudio(block);
+            if (m_overlay) {
+                m_overlay->PushV4Scores(
+                    m_recognizer->LastOutput(), m_recognizer->LastSceneActivity(),
+                    m_recognizer->LastError().empty() &&
+                        m_recognizer->Stats().inferenceCount != 0);
+            }
             if (!m_recognizer->LastError().empty()) {
                 std::cerr << "[EchoRadar] V4 recognition paused after an inference error: "
                           << m_recognizer->LastError() << '\n';

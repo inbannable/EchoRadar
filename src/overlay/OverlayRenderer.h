@@ -47,6 +47,9 @@ public:
     void PushV4Event(const V4SoundEvent& event);
     void PushAudioClock(uint64_t sample, uint64_t streamGeneration,
                         bool discontinuity = false);
+    void PushAudioLevels(const AudioLevels& levels);
+    void PushV4Scores(const V4ModelOutput& output, float sceneActivity,
+                      bool hasOutput);
 
     /// Main render tick – call from the main/UI thread.
     void Render();
@@ -73,10 +76,17 @@ private:
     std::deque<V4SoundEvent> m_v4Events;
     uint64_t m_currentSample{0};
     uint64_t m_streamGeneration{0};
+    AudioLevels m_audioLevels{};
+    V4ModelOutput m_v4Scores{};
+    float m_sceneActivity{0.0f};
+    bool m_haveV4Scores{false};
     float m_chartWindowSeconds{30.0f};
     std::vector<ActiveMarker> m_markers;
 
     void DrawUi();
+    void DrawLiveDiagnostics(const AudioLevels& levels,
+                             const V4ModelOutput& scores,
+                             float sceneActivity, bool haveScores);
     void DrawEventTimeline(const std::deque<V4SoundEvent>& events,
                            uint64_t currentSample, uint64_t streamGeneration);
     void DrawRecentEvents(const std::deque<V4SoundEvent>& events,

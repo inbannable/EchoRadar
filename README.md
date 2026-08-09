@@ -77,7 +77,10 @@ Place the training output at `models\v4-candidate` or pass another package direc
 On Windows, the executable opens the V4 event chart by default. The timeline shows
 gunshots and footsteps against the current stream time; the V4 tune table applies
 threshold, spacing, onset-offset, scene, self-suppression, and pulse-width changes
-on the next audio block. Use `--no-overlay` only for headless capture/recognition.
+on the next audio block. The live diagnostics panel also shows the current
+scene-activity sound-level score, capture RMS/peak in dBFS, and raw gunshot/footstep
+onset scores before peak/event gating. Use `--no-overlay` only for headless
+capture/recognition.
 
 List render endpoints and optionally pin one by its opaque ID:
 
