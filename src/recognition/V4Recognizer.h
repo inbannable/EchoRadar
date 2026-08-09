@@ -3,6 +3,7 @@
 #include "StereoOnsetFeatureExtractor.h"
 #include "V4ModelPackage.h"
 #include "V4ProbabilityModel.h"
+#include "V4RuntimeConfig.h"
 
 #include <audio/AudioStreamConsumer.h>
 
@@ -33,6 +34,10 @@ public:
     V4Recognizer(std::shared_ptr<V4ProbabilityModel> model,
                  V4ModelPackage package,
                  EventCallback callback = {});
+    V4Recognizer(std::shared_ptr<V4ProbabilityModel> model,
+                 V4ModelPackage package,
+                 EventCallback callback,
+                 std::shared_ptr<V4RuntimeTuningStore> runtimeTuning);
 
     std::vector<V4SoundEvent> PushInterleaved(const float* stereoSamples, size_t frameCount);
     std::vector<V4SoundEvent> Flush();
@@ -67,6 +72,9 @@ private:
     std::shared_ptr<V4ProbabilityModel> m_model;
     V4ModelPackage m_package;
     EventCallback m_callback;
+    std::shared_ptr<V4RuntimeTuningStore> m_runtimeTuning;
+    V4RuntimeTuning m_appliedTuning{};
+    bool m_haveAppliedTuning{false};
     StereoOnsetFeatureExtractor m_features;
     std::deque<StereoOnsetFeatureFrame> m_context;
     std::vector<float> m_input;
@@ -102,6 +110,7 @@ private:
     const TracePoint& TraceAt(uint64_t index) const;
     void PruneTrace();
     void Publish(const std::vector<V4SoundEvent>& events);
+    void ApplyRuntimeTuning();
 };
 
 } // namespace EchoRadar

@@ -19,6 +19,7 @@ set(ECHORADAR_RECOGNITION_SOURCES
     V4ProbabilityModel.h
     V4ModelPackage.h
     V4ModelPackage.cpp
+    V4RuntimeConfig.h
     StereoOnsetFeatureExtractor.h
     StereoOnsetFeatureExtractor.cpp
     V4OnnxModel.h

@@ -221,6 +221,25 @@ TEST(V4Recognizer, AppliesPeakSpacingAndCalibratedOnset) {
     EXPECT_EQ(events[0].sourceHint, SoundSourceHint::Remote);
 }
 
+TEST(V4Recognizer, AppliesRuntimeTuningOnNextAudioBlock) {
+    std::vector<V4ModelOutput> outputs(15, Output(0.1f, 0.1f));
+    outputs[1] = Output(0.4f, 0.1f);
+    outputs[2] = Output(0.9f, 0.1f);
+    auto model = std::make_shared<CapturingV4Model>(outputs);
+    V4ModelPackage package = TestPackage();
+    auto tuningStore = std::make_shared<V4RuntimeTuningStore>(
+        V4RuntimeTuning::FromPackage(package));
+    auto tuning = tuningStore->Snapshot();
+    tuning.onsetOffsetSamples[0] = 480;
+    tuningStore->Update(tuning);
+    V4Recognizer recognizer(model, package, {}, tuningStore);
+    const size_t pcmFrames = 1024 + 28 * 240;
+    std::vector<float> silence(pcmFrames * 2, 0.0f);
+    const auto events = recognizer.PushInterleaved(silence.data(), pcmFrames);
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].onsetSample, 1984u - 480u);
+}
+
 TEST(V4Recognizer, SuppressesSelfEventsFromRealtimeCallback) {
     std::vector<V4ModelOutput> outputs(15, Output(0.1f, 0.1f));
     outputs[2] = Output(0.9f, 0.1f, {0.98f, 0.01f, 0.01f});

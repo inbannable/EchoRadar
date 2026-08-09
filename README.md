@@ -19,7 +19,7 @@ The repository contains the original duration-based baseline and native v3 path,
 | Recognition accuracy | **Below gate** | Baseline results are recorded in [the recognition report](docs/recognition_baseline_v1.md). |
 | Real CS2 validation | Waiting for recordings | Import/audit tooling is ready, but no held-out continuous gameplay sessions have been supplied or labeled yet. |
 | Direction estimation | Deferred | Extracted assets have no known bearing labels; the current KNN code remains a placeholder. |
-| Main application and overlay | Experimental v4 connected | `EchoRadar.exe` starts loopback capture itself and consumes `models/v4-candidate`; event output is connected, while overlay/localization behavior remains intentionally unchanged. |
+| Main application and event chart | Experimental v4 connected | `EchoRadar.exe` starts loopback capture itself, shows a rolling V4 event timeline, and exposes live event-policy tuning; localization remains intentionally unchanged. |
 
 The automated suites validate algorithms and contracts, not real-game accuracy. A passing test suite must not be interpreted as recognition performance.
 
@@ -73,6 +73,11 @@ Place the training output at `models\v4-candidate` or pass another package direc
 ```powershell
 .\build\src\app\Release\EchoRadar.exe --model models\v4-candidate
 ```
+
+On Windows, the executable opens the V4 event chart by default. The timeline shows
+gunshots and footsteps against the current stream time; the V4 tune table applies
+threshold, spacing, onset-offset, scene, self-suppression, and pulse-width changes
+on the next audio block. Use `--no-overlay` only for headless capture/recognition.
 
 List render endpoints and optionally pin one by its opaque ID:
 

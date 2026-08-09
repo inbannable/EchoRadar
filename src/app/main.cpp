@@ -6,6 +6,13 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
+#include <vector>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -13,6 +20,55 @@ EchoRadar::EchoRadarApp* g_app = nullptr;
 
 void OnSignal(int) {
     if (g_app != nullptr) g_app->Stop();
+}
+
+std::filesystem::path ExecutablePath(const char* argumentZero) {
+#ifdef _WIN32
+    std::vector<wchar_t> buffer(32768);
+    const DWORD length = GetModuleFileNameW(
+        nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length != 0 && length < buffer.size()) {
+        return std::filesystem::path(std::wstring(buffer.data(), length));
+    }
+#endif
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(argumentZero, error);
+    return error ? std::filesystem::path(argumentZero) : absolute;
+}
+
+bool IsV4ModelPackage(const std::filesystem::path& directory) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(directory / "model.json", error);
+}
+
+std::filesystem::path ResolveDefaultModelDirectory(const char* argumentZero) {
+    const auto executableDirectory = ExecutablePath(argumentZero).parent_path();
+    std::vector<std::filesystem::path> candidates{
+        executableDirectory / "models" / "v4-candidate",
+    };
+
+    std::error_code error;
+    const auto workingDirectory = std::filesystem::current_path(error);
+    if (!error) candidates.push_back(workingDirectory / "models" / "v4-candidate");
+
+    // A development build normally lives at build/src/app/<config>. Walk back
+    // to the checkout so launching the executable from any directory still
+    // finds the locally trained package.
+    for (auto ancestor = executableDirectory; !ancestor.empty();) {
+        candidates.push_back(ancestor / "models" / "v4-candidate");
+        const auto parent = ancestor.parent_path();
+        if (parent == ancestor) break;
+        ancestor = parent;
+    }
+
+    for (const auto& candidate : candidates) {
+        if (!IsV4ModelPackage(candidate)) continue;
+        const auto normalized = std::filesystem::weakly_canonical(candidate, error);
+        return error ? candidate : normalized;
+    }
+    return workingDirectory.empty()
+        ? std::filesystem::path("models/v4-candidate")
+        : workingDirectory / "models" / "v4-candidate";
 }
 
 void PrintOutputs() {
@@ -32,6 +88,11 @@ void PrintOutputs() {
 } // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // miniaudio exposes endpoint names as UTF-8. Match the console code page so
+    // localized device names are not printed as mojibake.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     EchoRadar::EchoRadarApp::Config config;
     bool listOutputs = false;
     bool modelWasExplicit = false;
@@ -53,7 +114,7 @@ int main(int argc, char* argv[]) {
                 << "  --list-audio-outputs       List render endpoints for loopback\n"
                 << "  --audio-output-id <id>     Pin capture to one render endpoint\n"
                 << "  --model <package-dir>      Load an experimental V4 package\n"
-                << "  --no-overlay               Do not initialize the overlay stub\n";
+                << "  --no-overlay               Do not initialize the V4 event chart UI\n";
             return 0;
         } else {
             std::cerr << "Unknown or incomplete option: " << argument << '\n';
@@ -65,15 +126,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!modelWasExplicit) {
-        const std::filesystem::path besideExecutable =
-            std::filesystem::absolute(argv[0]).parent_path() / "models" / "v4-candidate";
-        if (std::filesystem::is_directory(besideExecutable)) {
-            config.modelDirectory = besideExecutable;
-        }
-    }
+    if (!modelWasExplicit) config.modelDirectory = ResolveDefaultModelDirectory(argv[0]);
 
     std::cout << "=== EchoRadar experimental V4 ===\n";
+    std::cout << "[EchoRadar] V4 model package: " << config.modelDirectory.string() << '\n';
     EchoRadar::EchoRadarApp app(config);
     g_app = &app;
     std::signal(SIGINT, OnSignal);

@@ -32,9 +32,16 @@ SoundClass V4Class(size_t index) {
 V4Recognizer::V4Recognizer(std::shared_ptr<V4ProbabilityModel> model,
                            V4ModelPackage package,
                            EventCallback callback)
+    : V4Recognizer(std::move(model), std::move(package), std::move(callback), nullptr) {}
+
+V4Recognizer::V4Recognizer(std::shared_ptr<V4ProbabilityModel> model,
+                           V4ModelPackage package,
+                           EventCallback callback,
+                           std::shared_ptr<V4RuntimeTuningStore> runtimeTuning)
     : m_model(std::move(model)),
       m_package(std::move(package)),
       m_callback(std::move(callback)),
+      m_runtimeTuning(std::move(runtimeTuning)),
       m_features(FeatureConfig(m_package)) {
     if (!m_model || m_model->InputFrames() != m_package.contextFrames ||
         m_model->InputBins() != m_package.melBins ||
@@ -47,6 +54,7 @@ V4Recognizer::V4Recognizer(std::shared_ptr<V4ProbabilityModel> model,
 
 std::vector<V4SoundEvent>
 V4Recognizer::PushInterleaved(const float* stereoSamples, size_t frameCount) {
+    ApplyRuntimeTuning();
     std::vector<V4SoundEvent> events;
     m_features.PushInterleaved(stereoSamples, frameCount);
     m_stats.processedPcmFrames += frameCount;
@@ -288,6 +296,15 @@ void V4Recognizer::OnAudio(const AudioBlockView& block) {
 void V4Recognizer::OnStreamReset(uint64_t streamGeneration) {
     Reset();
     m_streamGeneration = streamGeneration;
+}
+
+void V4Recognizer::ApplyRuntimeTuning() {
+    if (!m_runtimeTuning) return;
+    const V4RuntimeTuning tuning = m_runtimeTuning->Snapshot();
+    if (m_haveAppliedTuning && tuning == m_appliedTuning) return;
+    tuning.ApplyTo(m_package);
+    m_appliedTuning = tuning;
+    m_haveAppliedTuning = true;
 }
 
 } // namespace EchoRadar

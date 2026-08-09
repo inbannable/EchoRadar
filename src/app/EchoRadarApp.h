@@ -44,6 +44,9 @@ private:
     std::shared_ptr<V4OnnxModel> m_model;
     std::unique_ptr<V4Recognizer> m_recognizer;
     std::unique_ptr<OverlayRenderer> m_overlay;
+    std::shared_ptr<V4RuntimeTuningStore> m_runtimeTuning;
+    std::string m_modelVersion;
+    uint32_t m_peakLookaheadFrames{0};
     std::string m_recognitionError;
 
     std::atomic<bool> m_stop{false};

@@ -34,6 +34,10 @@ bool EchoRadarApp::Initialise() {
     if (!V4ModelPackage::Load(m_cfg.modelDirectory, package, &m_recognitionError)) {
         std::cerr << "[EchoRadar] V4 recognition paused: " << m_recognitionError << '\n';
     } else {
+        m_modelVersion = package.modelVersion;
+        m_peakLookaheadFrames = package.peakLookaheadFrames;
+        m_runtimeTuning = std::make_shared<V4RuntimeTuningStore>(
+            V4RuntimeTuning::FromPackage(package));
         m_model = std::make_shared<V4OnnxModel>(
             package.modelPath, package.contextFrames, package.melBins, package.inputChannels);
         if (!m_model->IsLoaded()) {
@@ -52,7 +56,9 @@ bool EchoRadarApp::Initialise() {
                           << m_recognitionError << '\n';
             } else {
                 m_recognizer = std::make_unique<V4Recognizer>(
-                    m_model, package, [this](const V4SoundEvent& event) { HandleEvent(event); });
+                    m_model, package,
+                    [this](const V4SoundEvent& event) { HandleEvent(event); },
+                    m_runtimeTuning);
                 std::cout << "[EchoRadar] Experimental V4 model loaded: "
                           << package.modelVersion << '\n';
             }
@@ -60,8 +66,17 @@ bool EchoRadarApp::Initialise() {
     }
 
     if (m_cfg.show_overlay) {
-        m_overlay = std::make_unique<OverlayRenderer>();
-        m_overlay->Initialise();
+        OverlayRenderer::Config overlayConfig;
+        overlayConfig.sample_rate = 48000;
+        overlayConfig.peak_lookahead_frames = m_peakLookaheadFrames;
+        overlayConfig.model_version = m_modelVersion;
+        overlayConfig.recognition_error = m_recognitionError;
+        overlayConfig.v4_tuning = m_runtimeTuning;
+        m_overlay = std::make_unique<OverlayRenderer>(std::move(overlayConfig));
+        if (!m_overlay->Initialise()) {
+            std::cerr << "[EchoRadar] Event chart UI could not be initialized; continuing headless.\n";
+            m_overlay.reset();
+        }
     }
     const auto status = m_audio->GetStatus();
     if (status.state == AudioCaptureState::Running) {
@@ -77,6 +92,10 @@ void EchoRadarApp::Run() {
     m_dsp_thread = std::thread(&EchoRadarApp::DSPLoop, this);
     while (!m_stop.load(std::memory_order_acquire)) {
         if (m_overlay && m_overlay->IsRunning()) m_overlay->Render();
+        if (m_overlay && !m_overlay->IsRunning()) {
+            Stop();
+            break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
     if (m_dsp_thread.joinable()) m_dsp_thread.join();
@@ -88,6 +107,7 @@ void EchoRadarApp::Stop() {
 }
 
 void EchoRadarApp::HandleEvent(const V4SoundEvent& event) {
+    if (m_overlay) m_overlay->PushV4Event(event);
     std::printf(
         "\n[V4 %s] source=%s scene=%s confidence=%.3f onset=%.3fs detected=%.3fs "
         "delivered=%.3fs stream=%llu\n",
@@ -105,6 +125,10 @@ void EchoRadarApp::DSPLoop() {
     AudioCaptureState previousState = AudioCaptureState::Stopped;
     while (!m_stop.load(std::memory_order_acquire)) {
         const AudioReadResult read = m_audio->Read(samples.data(), kChunkFrames);
+        if (m_overlay) {
+            m_overlay->PushAudioClock(read.firstSample + read.frames,
+                                      read.streamGeneration, read.discontinuity);
+        }
         const AudioCaptureStatus status = m_audio->GetStatus();
         if (status.state != previousState) {
             previousState = status.state;

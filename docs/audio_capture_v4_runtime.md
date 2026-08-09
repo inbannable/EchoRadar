@@ -4,7 +4,7 @@
 
 EchoRadar captures the mix sent to a Windows render endpoint with WASAPI loopback. It does not change the Windows playback route, install a virtual device, or require OBS/VB-CABLE. The default configuration follows the Windows default output device; a command-line endpoint ID can pin capture to one device.
 
-The runtime integration is deliberately limited to audio capture and experimental v4 sound events. It does not change localization or overlay rendering, and passing native tests does not establish real-game recognition accuracy.
+The runtime integration is deliberately limited to audio capture and experimental v4 sound events. The Windows app now renders those events in a rolling time chart and exposes the V4 event policy as a live tune table; localization is unchanged. Passing native tests does not establish real-game recognition accuracy.
 
 ## Data flow
 
@@ -55,7 +55,7 @@ At startup EchoRadar performs one silent padded inference to validate input/outp
 # Follow the Windows default output and load the default model directory.
 .\build\src\app\Release\EchoRadar.exe
 
-# Use an explicit candidate package and disable the existing overlay stub.
+# Use an explicit candidate package and disable the event chart UI for headless runs.
 .\build\src\app\Release\EchoRadar.exe `
   --model models\v4-candidate `
   --no-overlay
