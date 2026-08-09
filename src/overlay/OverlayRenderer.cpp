@@ -45,6 +45,7 @@ struct OverlayRenderer::PlatformImpl {
     bool classRegistered{false};
     bool imguiInitialized{false};
     ImGuiContext* imguiContext{nullptr};
+    ImGuiStyle baseStyle{};
 };
 
 namespace {
@@ -264,6 +265,7 @@ bool OverlayRenderer::Initialise() {
     style.Colors[ImGuiCol_FrameBg] = ImVec4(0.11f, 0.14f, 0.19f, 1.0f);
     style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.16f, 0.21f, 0.29f, 1.0f);
     style.Colors[ImGuiCol_Header] = ImVec4(0.12f, 0.25f, 0.36f, 1.0f);
+    m_platform->baseStyle = style;
     ImGui_ImplWin32_Init(m_platform->window);
     ImGui_ImplDX11_Init(m_platform->device, m_platform->deviceContext);
     m_platform->imguiInitialized = true;
@@ -384,6 +386,10 @@ void OverlayRenderer::Render() {
         }
     }
 
+    const AppSettings appSettings = m_cfg.runtime_settings
+        ? m_cfg.runtime_settings->Snapshot() : AppSettings{};
+    ApplyUiScale(appSettings.uiScale);
+
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -399,6 +405,19 @@ void OverlayRenderer::Render() {
 }
 
 #ifdef _WIN32
+
+void OverlayRenderer::ApplyUiScale(float scale) {
+    if (!m_platform) return;
+    if (!std::isfinite(scale)) scale = AppSettings::kDefaultUiScale;
+    scale = std::clamp(scale, AppSettings::kMinUiScale, AppSettings::kMaxUiScale);
+    if (std::abs(scale - m_appliedUiScale) < 0.001f) return;
+
+    ImGuiStyle scaledStyle = m_platform->baseStyle;
+    scaledStyle.ScaleAllSizes(scale);
+    ImGui::GetStyle() = scaledStyle;
+    ImGui::GetIO().FontGlobalScale = scale;
+    m_appliedUiScale = scale;
+}
 
 void OverlayRenderer::DrawUi() {
     std::deque<V4SoundEvent> events;
@@ -1050,6 +1069,23 @@ void OverlayRenderer::DrawAudioSystemPage() {
                 m_cfg.model_version.empty() ? "unavailable" : m_cfg.model_version.c_str());
     if (m_cfg.runtime_settings) {
         AppSettings settings = m_cfg.runtime_settings->Snapshot();
+        ImGui::TextUnformatted("Interface");
+        ImGui::SetNextItemWidth(280.0f);
+        float uiScalePercent = settings.uiScale * 100.0f;
+        if (ImGui::SliderFloat("UI scale", &uiScalePercent,
+                              AppSettings::kMinUiScale * 100.0f,
+                              AppSettings::kMaxUiScale * 100.0f, "%.0f%%")) {
+            settings.uiScale = std::clamp(
+                uiScalePercent / 100.0f, AppSettings::kMinUiScale, AppSettings::kMaxUiScale);
+            m_cfg.runtime_settings->Update(settings, true, nullptr);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset UI scale")) {
+            settings.uiScale = AppSettings::kDefaultUiScale;
+            m_cfg.runtime_settings->Update(settings, true, nullptr);
+        }
+        ImGui::TextDisabled("Changes apply immediately and are saved to settings.json.");
+        ImGui::Separator();
         ImGui::TextWrapped("Settings: %s",
                            m_cfg.runtime_settings->Path().string().c_str());
         if (m_cfg.calibration) {

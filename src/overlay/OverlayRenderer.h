@@ -93,9 +93,11 @@ private:
     float m_sceneActivity{0.0f};
     bool m_haveV4Scores{false};
     float m_chartWindowSeconds{30.0f};
+    float m_appliedUiScale{1.0f};
     std::vector<ActiveMarker> m_markers;
 
     void DrawUi();
+    void ApplyUiScale(float scale);
     void DrawLiveDiagnostics(const AudioLevels& levels,
                              const V4ModelOutput& scores,
                              float sceneActivity, bool haveScores);

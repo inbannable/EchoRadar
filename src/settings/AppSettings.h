@@ -10,11 +10,15 @@ namespace EchoRadar {
 
 struct AppSettings {
     static constexpr uint32_t kSchemaVersion = 1;
+    static constexpr float kDefaultUiScale = 1.25f;
+    static constexpr float kMinUiScale = 0.75f;
+    static constexpr float kMaxUiScale = 2.0f;
 
     uint32_t schemaVersion{kSchemaVersion};
     AudioProfile audioProfile;
     LocalizationTuning localization;
     OverlaySettings overlay;
+    float uiScale{kDefaultUiScale};
     bool sessionLogging{true};
 
     static AppSettings Clamp(AppSettings settings);

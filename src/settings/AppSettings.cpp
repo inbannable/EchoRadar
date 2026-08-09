@@ -3,6 +3,7 @@
 #include <dataset/DatasetJson.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -11,6 +12,9 @@
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
 #endif
 #include <windows.h>
 #endif
@@ -72,6 +76,14 @@ AppSettings AppSettings::Clamp(AppSettings settings) {
         settings.overlay.footstepLifetimeSeconds, 0.1f, 10.0f);
     settings.overlay.gunshotLifetimeSeconds = std::clamp(
         settings.overlay.gunshotLifetimeSeconds, 0.1f, 10.0f);
+    // A stale build once wrote a subnormal float here when the settings struct
+    // layout changed. Treat that bit pattern as corrupted and restore a usable
+    // default instead of silently clamping the UI to its smallest size.
+    if (!std::isfinite(settings.uiScale) ||
+        (settings.uiScale > 0.0f && settings.uiScale < kMinUiScale * 0.5f)) {
+        settings.uiScale = kDefaultUiScale;
+    }
+    settings.uiScale = std::clamp(settings.uiScale, kMinUiScale, kMaxUiScale);
     return settings;
 }
 
@@ -151,6 +163,7 @@ bool AppSettingsFile::Load(const std::filesystem::path& path,
     loaded.overlay.gunshotLifetimeSeconds = detail::GetFloatVal(
         values, "overlay_gunshot_lifetime_s", 0.8f);
     loaded.overlay.showCenterDot = detail::GetBoolVal(values, "overlay_center_dot", false);
+    loaded.uiScale = detail::GetFloatVal(values, "ui_scale", AppSettings::kDefaultUiScale);
     loaded.sessionLogging = detail::GetBoolVal(values, "session_logging", true);
     settings = AppSettings::Clamp(std::move(loaded));
     if (error) error->clear();
@@ -203,6 +216,7 @@ bool AppSettingsFile::Save(const std::filesystem::path& path,
            << "  \"overlay_footstep_lifetime_s\": " << safe.overlay.footstepLifetimeSeconds << ",\n"
            << "  \"overlay_gunshot_lifetime_s\": " << safe.overlay.gunshotLifetimeSeconds << ",\n"
            << "  \"overlay_center_dot\": " << (safe.overlay.showCenterDot ? "true" : "false") << ",\n"
+           << "  \"ui_scale\": " << safe.uiScale << ",\n"
            << "  \"session_logging\": " << (safe.sessionLogging ? "true" : "false") << "\n"
            << "}\n";
     output.flush();
