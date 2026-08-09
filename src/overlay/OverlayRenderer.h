@@ -2,6 +2,9 @@
 #include "../common/Types.h"
 #include "../recognition/V4RecognitionTypes.h"
 #include "../recognition/V4RuntimeConfig.h"
+#include "../localization/CalibrationController.h"
+#include "../localization/LocalizationTypes.h"
+#include "../settings/AppSettings.h"
 
 #include <cstdint>
 #include <deque>
@@ -28,6 +31,8 @@ public:
         std::string model_version;
         std::string recognition_error;
         std::shared_ptr<V4RuntimeTuningStore> v4_tuning;
+        std::shared_ptr<RuntimeSettingsStore> runtime_settings;
+        std::shared_ptr<CalibrationController> calibration;
     };
 
     OverlayRenderer();
@@ -45,6 +50,8 @@ public:
     void PushFootstep(const FootstepEvent&     ev, const DirectionEstimate& dir);
     void PushGunshot (const GunshotEvent&      ev, const DirectionEstimate& dir);
     void PushV4Event(const V4SoundEvent& event);
+    void PushLocalizedEvent(const V4SoundEvent& event,
+                            const DirectionResult& direction);
     void PushAudioClock(uint64_t sample, uint64_t streamGeneration,
                         bool discontinuity = false);
     void PushAudioLevels(const AudioLevels& levels);
@@ -74,6 +81,11 @@ private:
 
     mutable std::mutex m_dataMutex;
     std::deque<V4SoundEvent> m_v4Events;
+    struct LocalizedRecord {
+        V4SoundEvent event;
+        DirectionResult direction;
+    };
+    std::deque<LocalizedRecord> m_localizedEvents;
     uint64_t m_currentSample{0};
     uint64_t m_streamGeneration{0};
     AudioLevels m_audioLevels{};
@@ -92,6 +104,10 @@ private:
     void DrawRecentEvents(const std::deque<V4SoundEvent>& events,
                           uint64_t streamGeneration);
     void DrawTuneTable();
+    void DrawDirectionPage(const std::deque<LocalizedRecord>& events);
+    void DrawCalibrationPage();
+    void DrawOverlayPage();
+    void DrawAudioSystemPage();
 };
 
 } // namespace EchoRadar

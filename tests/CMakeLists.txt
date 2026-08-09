@@ -8,7 +8,9 @@ add_executable(echoradar_tests
     test_features.cpp
     test_feature_history_buffer.cpp
     test_localization.cpp
+    test_direction_estimator.cpp
     test_tracking.cpp
+    test_app_settings.cpp
     test_dataset_manager.cpp
     test_asset_inventory.cpp
     test_recognition.cpp
@@ -22,6 +24,7 @@ target_link_libraries(echoradar_tests
         echoradar_events
         echoradar_features
         echoradar_localization
+        echoradar_settings
         echoradar_tracking
         echoradar_dataset
         echoradar_recognition

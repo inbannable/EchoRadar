@@ -44,6 +44,7 @@ struct OverlayRenderer::PlatformImpl {
     HINSTANCE instance{nullptr};
     bool classRegistered{false};
     bool imguiInitialized{false};
+    ImGuiContext* imguiContext{nullptr};
 };
 
 namespace {
@@ -142,6 +143,9 @@ LRESULT WINAPI OverlayWindowProc(HWND window, UINT message,
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(platform));
     }
 
+    if (platform != nullptr && platform->imguiContext != nullptr) {
+        ImGui::SetCurrentContext(platform->imguiContext);
+    }
     if (ImGui::GetCurrentContext() != nullptr &&
         ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
         return true;
@@ -191,6 +195,8 @@ void DrawText(ImDrawList* drawList, ImVec2 position, ImU32 color,
 }
 
 } // namespace
+#else
+struct OverlayRenderer::PlatformImpl {};
 #endif
 
 OverlayRenderer::OverlayRenderer() : OverlayRenderer(Config{}) {}
@@ -243,7 +249,7 @@ bool OverlayRenderer::Initialise() {
     }
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    m_platform->imguiContext = ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
@@ -276,9 +282,11 @@ void OverlayRenderer::Shutdown() {
 #ifdef _WIN32
     if (m_platform) {
         if (m_platform->imguiInitialized) {
+            ImGui::SetCurrentContext(m_platform->imguiContext);
             ImGui_ImplDX11_Shutdown();
             ImGui_ImplWin32_Shutdown();
-            ImGui::DestroyContext();
+            ImGui::DestroyContext(m_platform->imguiContext);
+            m_platform->imguiContext = nullptr;
             m_platform->imguiInitialized = false;
         }
         CleanupDevice(*m_platform);
@@ -321,11 +329,22 @@ void OverlayRenderer::PushV4Event(const V4SoundEvent& event) {
     while (m_v4Events.size() > kMaximumChartEvents) m_v4Events.pop_front();
 }
 
+void OverlayRenderer::PushLocalizedEvent(const V4SoundEvent& event,
+                                         const DirectionResult& direction) {
+    std::lock_guard<std::mutex> lock(m_dataMutex);
+    m_localizedEvents.push_back({event, direction});
+    constexpr size_t kMaximumLocalizedEvents = 256;
+    while (m_localizedEvents.size() > kMaximumLocalizedEvents) {
+        m_localizedEvents.pop_front();
+    }
+}
+
 void OverlayRenderer::PushAudioClock(uint64_t sample, uint64_t streamGeneration,
                                       bool discontinuity) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     if (discontinuity || streamGeneration != m_streamGeneration) {
         m_v4Events.clear();
+        m_localizedEvents.clear();
         m_streamGeneration = streamGeneration;
         m_currentSample = 0;
         m_audioLevels = {};
@@ -352,6 +371,8 @@ void OverlayRenderer::PushV4Scores(const V4ModelOutput& output, float sceneActiv
 void OverlayRenderer::Render() {
 #ifdef _WIN32
     if (!m_running || !m_platform || !m_platform->imguiInitialized) return;
+
+    ImGui::SetCurrentContext(m_platform->imguiContext);
 
     MSG message{};
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -381,6 +402,7 @@ void OverlayRenderer::Render() {
 
 void OverlayRenderer::DrawUi() {
     std::deque<V4SoundEvent> events;
+    std::deque<LocalizedRecord> localizedEvents;
     uint64_t currentSample = 0;
     uint64_t streamGeneration = 0;
     AudioLevels audioLevels;
@@ -390,6 +412,7 @@ void OverlayRenderer::DrawUi() {
     {
         std::lock_guard<std::mutex> lock(m_dataMutex);
         events = m_v4Events;
+        localizedEvents = m_localizedEvents;
         currentSample = m_currentSample;
         streamGeneration = m_streamGeneration;
         audioLevels = m_audioLevels;
@@ -432,31 +455,57 @@ void OverlayRenderer::DrawUi() {
                            "Recognition paused: %s", m_cfg.recognition_error.c_str());
     }
 
-    DrawLiveDiagnostics(audioLevels, v4Scores, sceneActivity, haveV4Scores);
-
-    if (ImGui::Button("Clear chart")) {
-        std::lock_guard<std::mutex> lock(m_dataMutex);
-        m_v4Events.clear();
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(180.0f);
-    ImGui::SliderFloat("Timeline span", &m_chartWindowSeconds, 5.0f, 120.0f, "%.0f s");
-    ImGui::SameLine();
-    ImGui::TextDisabled("event time is relative to the current audio stream");
-
-    DrawEventTimeline(events, currentSample, streamGeneration);
-
-    if (ImGui::BeginTable("LowerPanels", 2,
-                          ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV,
-                          ImVec2(0.0f, 0.0f))) {
-        ImGui::TableSetupColumn("Recent events", ImGuiTableColumnFlags_WidthStretch, 1.1f);
-        ImGui::TableSetupColumn("V4 tune table", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        DrawRecentEvents(events, streamGeneration);
-        ImGui::TableNextColumn();
-        DrawTuneTable();
-        ImGui::EndTable();
+    if (ImGui::BeginTabBar("EchoRadarPages")) {
+        if (ImGui::BeginTabItem("Live")) {
+            DrawLiveDiagnostics(audioLevels, v4Scores, sceneActivity, haveV4Scores);
+            if (ImGui::Button("Clear chart")) {
+                std::lock_guard<std::mutex> lock(m_dataMutex);
+                m_v4Events.clear();
+                m_localizedEvents.clear();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::SliderFloat("Timeline span", &m_chartWindowSeconds,
+                               5.0f, 120.0f, "%.0f s");
+            DrawEventTimeline(events, currentSample, streamGeneration);
+            if (ImGui::BeginTable("LiveLowerPanels", 2,
+                                  ImGuiTableFlags_Resizable |
+                                      ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("Recognition events",
+                                        ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Direction estimates",
+                                        ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                DrawRecentEvents(events, streamGeneration);
+                ImGui::TableNextColumn();
+                DrawDirectionPage(localizedEvents);
+                ImGui::EndTable();
+            }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Recognition")) {
+            ImGui::TextDisabled("Recognition event policy; changes apply on the next audio block.");
+            DrawTuneTable();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Direction")) {
+            DrawDirectionPage(localizedEvents);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Calibration")) {
+            DrawCalibrationPage();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Overlay")) {
+            DrawOverlayPage();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Audio & System")) {
+            DrawAudioSystemPage();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
     ImGui::End();
 }
@@ -774,6 +823,257 @@ void OverlayRenderer::DrawTuneTable() {
                         m_cfg.peak_lookahead_frames);
 }
 
+void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& events) {
+    if (!m_cfg.runtime_settings) {
+        ImGui::TextDisabled("Direction settings are unavailable.");
+        return;
+    }
+    AppSettings settings = m_cfg.runtime_settings->Snapshot();
+    bool changed = false;
+
+    DirectionProfileSource activeSource = DirectionProfileSource::Synthetic;
+    if (m_cfg.calibration &&
+        m_cfg.calibration->ProfileSnapshot().Matches(settings.audioProfile)) {
+        activeSource = DirectionProfileSource::Calibrated;
+    }
+    ImGui::TextColored(activeSource == DirectionProfileSource::Calibrated
+                           ? ImVec4(0.30f, 0.92f, 0.52f, 1.0f)
+                           : ImVec4(1.0f, 0.72f, 0.32f, 1.0f),
+                       "Direction profile: %s",
+                       activeSource == DirectionProfileSource::Calibrated
+                           ? "CALIBRATED" : "SYNTHETIC / BASIC ACCURACY");
+
+    if (ImGui::BeginTable("DirectionSettings", 2,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
+                              ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Setting");
+        ImGui::TableSetupColumn("Value");
+        ImGui::TableHeadersRow();
+        const auto nextSetting = [](const char* label) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(label);
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+        };
+
+        nextSetting("Footstep direction");
+        changed |= ImGui::Checkbox("##localize_footsteps",
+                                   &settings.localization.localizeFootsteps);
+        nextSetting("Gunshot direction");
+        changed |= ImGui::Checkbox("##localize_gunshots",
+                                   &settings.localization.localizeGunshots);
+        nextSetting("Localization sample length");
+        int sampleMs = static_cast<int>(settings.localization.sampleWindowMs);
+        if (ImGui::SliderInt("##direction_window", &sampleMs, 100, 600, "%d ms")) {
+            settings.localization.sampleWindowMs = static_cast<uint32_t>(sampleMs);
+            changed = true;
+        }
+        nextSetting("Pre-onset audio");
+        int preMs = static_cast<int>(settings.localization.preOnsetMs);
+        if (ImGui::SliderInt("##direction_pre", &preMs, 0,
+                             std::max(0, sampleMs - 20), "%d ms")) {
+            settings.localization.preOnsetMs = static_cast<uint32_t>(preMs);
+            changed = true;
+        }
+        nextSetting("Minimum confidence");
+        changed |= ImGui::SliderFloat("##direction_confidence",
+                                      &settings.localization.minimumConfidence,
+                                      0.05f, 0.95f, "%.2f");
+        nextSetting("Show secondary direction");
+        changed |= ImGui::Checkbox("##direction_secondary",
+                                   &settings.localization.showSecondaryDirection);
+        nextSetting("Secondary probability ratio");
+        changed |= ImGui::SliderFloat("##direction_secondary_ratio",
+                                      &settings.localization.secondaryRatio,
+                                      0.25f, 1.0f, "%.2f");
+
+        nextSetting("EQ profile");
+        const char* eqNames[]{"Natural", "Crisp", "Smooth"};
+        int eq = static_cast<int>(settings.audioProfile.eqProfile);
+        if (ImGui::Combo("##audio_eq", &eq, eqNames, 3)) {
+            settings.audioProfile.eqProfile = static_cast<HeadphoneEqProfile>(eq);
+            changed = true;
+        }
+        nextSetting("L/R isolation");
+        changed |= ImGui::SliderFloat("##audio_lr_isolation",
+                                      &settings.audioProfile.leftRightIsolationPercent,
+                                      0.0f, 100.0f, "%.0f%%");
+        nextSetting("Perspective correction");
+        changed |= ImGui::Checkbox("##audio_perspective",
+                                   &settings.audioProfile.perspectiveCorrection);
+        nextSetting("Display aspect ratio");
+        changed |= ImGui::SliderFloat("##audio_aspect",
+                                      &settings.audioProfile.displayAspectRatio,
+                                      1.0f, 3.6f, "%.3f");
+        nextSetting("Windows spatial processing");
+        const char* spatialNames[]{"Off", "On", "Unknown"};
+        int spatial = static_cast<int>(settings.audioProfile.spatialEnhancement);
+        if (ImGui::Combo("##audio_spatial", &spatial, spatialNames, 3)) {
+            settings.audioProfile.spatialEnhancement =
+                static_cast<SpatialEnhancementState>(spatial);
+            changed = true;
+        }
+        ImGui::EndTable();
+    }
+    if (changed) m_cfg.runtime_settings->Update(settings, true, nullptr);
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Recent direction estimates");
+    if (ImGui::BeginTable("DirectionEvents", 7,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
+                              ImGuiTableFlags_ScrollY,
+                          ImVec2(0.0f, 230.0f))) {
+        ImGui::TableSetupColumn("Event");
+        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Angle");
+        ImGui::TableSetupColumn("Conf.");
+        ImGui::TableSetupColumn("Arc");
+        ImGui::TableSetupColumn("Profile");
+        ImGui::TableSetupColumn("Status");
+        ImGui::TableHeadersRow();
+        size_t shown = 0;
+        for (auto iterator = events.rbegin(); iterator != events.rend() && shown < 24;
+             ++iterator, ++shown) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%llu", static_cast<unsigned long long>(iterator->direction.eventId));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(EventShortName(iterator->event.soundClass));
+            ImGui::TableNextColumn();
+            ImGui::Text("%.0f deg", iterator->direction.primaryAngleDegrees);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", iterator->direction.confidence);
+            ImGui::TableNextColumn();
+            ImGui::Text("+/-%.0f", iterator->direction.uncertaintyDegrees);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(ToString(iterator->direction.profileSource));
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(ToString(iterator->direction.status));
+        }
+        if (shown == 0) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("Waiting for localized events...");
+        }
+        ImGui::EndTable();
+    }
+}
+
+void OverlayRenderer::DrawCalibrationPage() {
+    if (!m_cfg.calibration || !m_cfg.runtime_settings) {
+        ImGui::TextDisabled("Calibration controls are unavailable.");
+        return;
+    }
+    const AppSettings settings = m_cfg.runtime_settings->Snapshot();
+    const CalibrationController::State state = m_cfg.calibration->Snapshot();
+    ImGui::TextWrapped("Use a private/practice session with one fixed remote sound source. "
+                       "Face the source at the displayed relative bearing, arm EchoRadar, "
+                       "then produce one footstep event.");
+    if (ImGui::Button("Start quick (24 samples)")) {
+        m_cfg.calibration->Begin(CalibrationController::Mode::Quick,
+                                 settings.audioProfile);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Start full (96 samples)")) {
+        m_cfg.calibration->Begin(CalibrationController::Mode::Full,
+                                 settings.audioProfile);
+    }
+    ImGui::Separator();
+    if (state.active || state.complete) {
+        ImGui::TextDisabled("TARGET BEARING");
+        ImGui::TextColored(ImVec4(0.30f, 0.85f, 1.0f, 1.0f),
+                           "%.0f degrees", state.targetAngleDegrees);
+        const float progress = state.requiredSamples == 0 ? 0.0f
+            : static_cast<float>(state.acceptedSamples) / state.requiredSamples;
+        char progressText[64]{};
+        std::snprintf(progressText, sizeof(progressText), "%zu / %zu events",
+                      state.acceptedSamples, state.requiredSamples);
+        ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0.0f), progressText);
+        if (!state.complete) {
+            if (!state.armed && ImGui::Button("Arm next event")) {
+                m_cfg.calibration->ArmNext();
+            }
+            if (state.armed) {
+                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.28f, 1.0f),
+                                   "ARMED - waiting for a remote event");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Stop")) m_cfg.calibration->Cancel();
+        } else if (ImGui::Button("Save calibration")) {
+            m_cfg.calibration->Save(nullptr);
+        }
+    }
+    ImGui::TextWrapped("%s", state.lastMessage.c_str());
+    const auto profile = m_cfg.calibration->ProfileSnapshot();
+    ImGui::TextDisabled("Stored samples: %zu | profile match: %s",
+                        profile.SampleCount(),
+                        profile.Matches(settings.audioProfile) ? "yes" : "stale");
+}
+
+void OverlayRenderer::DrawOverlayPage() {
+    if (!m_cfg.runtime_settings) return;
+    AppSettings settings = m_cfg.runtime_settings->Snapshot();
+    bool changed = false;
+    ImGui::TextWrapped("The direction HUD is a separate click-through topmost window. "
+                       "CS2 must use Fullscreen Windowed/Borderless mode.");
+    const char* visibilityNames[]{"Off", "CS2 only", "Always visible"};
+    int visibility = static_cast<int>(settings.overlay.visibility);
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::Combo("Visibility", &visibility, visibilityNames, 3)) {
+        settings.overlay.visibility = static_cast<OverlaySettings::Visibility>(visibility);
+        changed = true;
+    }
+    changed |= ImGui::SliderFloat("Radius", &settings.overlay.radiusPixels,
+                                  40.0f, 400.0f, "%.0f px");
+    changed |= ImGui::SliderFloat("Thickness", &settings.overlay.thicknessPixels,
+                                  2.0f, 32.0f, "%.1f px");
+    changed |= ImGui::SliderFloat("Opacity", &settings.overlay.opacity,
+                                  0.05f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Horizontal offset", &settings.overlay.offsetX,
+                                  -800.0f, 800.0f, "%.0f px");
+    changed |= ImGui::SliderFloat("Vertical offset", &settings.overlay.offsetY,
+                                  -800.0f, 800.0f, "%.0f px");
+    changed |= ImGui::SliderFloat("Footstep lifetime",
+                                  &settings.overlay.footstepLifetimeSeconds,
+                                  0.1f, 5.0f, "%.1f s");
+    changed |= ImGui::SliderFloat("Gunshot lifetime",
+                                  &settings.overlay.gunshotLifetimeSeconds,
+                                  0.1f, 5.0f, "%.1f s");
+    changed |= ImGui::Checkbox("Center dot", &settings.overlay.showCenterDot);
+    ImGui::TextDisabled("Global HUD hotkey: Ctrl+Alt+O");
+    if (changed) m_cfg.runtime_settings->Update(settings, true, nullptr);
+}
+
+void OverlayRenderer::DrawAudioSystemPage() {
+    ImGui::Text("Recognition model: %s",
+                m_cfg.model_version.empty() ? "unavailable" : m_cfg.model_version.c_str());
+    if (m_cfg.runtime_settings) {
+        AppSettings settings = m_cfg.runtime_settings->Snapshot();
+        ImGui::TextWrapped("Settings: %s",
+                           m_cfg.runtime_settings->Path().string().c_str());
+        if (m_cfg.calibration) {
+            ImGui::TextWrapped("Calibration: %s",
+                               m_cfg.calibration->Path().string().c_str());
+        }
+        if (ImGui::Checkbox("Write localized event JSONL session log",
+                            &settings.sessionLogging)) {
+            m_cfg.runtime_settings->Update(settings, true, nullptr);
+        }
+        if (ImGui::Button("Save settings now")) {
+            m_cfg.runtime_settings->Save(nullptr);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset app settings")) {
+            m_cfg.runtime_settings->Reset(true);
+        }
+    }
+    ImGui::Separator();
+    ImGui::TextWrapped("Capture contract: Windows system-output loopback, 48 kHz, "
+                       "interleaved stereo. Disable third-party mono conversion or "
+                       "untracked spatial processing for the most repeatable direction profile.");
+}
+
 #else
 
 void OverlayRenderer::DrawUi() {}
@@ -785,6 +1085,14 @@ void OverlayRenderer::DrawRecentEvents(const std::deque<V4SoundEvent>&,
                                         uint64_t) {}
 
 void OverlayRenderer::DrawTuneTable() {}
+
+void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>&) {}
+
+void OverlayRenderer::DrawCalibrationPage() {}
+
+void OverlayRenderer::DrawOverlayPage() {}
+
+void OverlayRenderer::DrawAudioSystemPage() {}
 
 #endif
 

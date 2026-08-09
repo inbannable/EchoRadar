@@ -1,10 +1,17 @@
 #pragma once
 #include "../audio/AudioCapture.h"
+#include "../audio/AudioHistoryBuffer.h"
+#include "../localization/CalibrationController.h"
+#include "../localization/StereoDirectionEstimator.h"
+#include "../overlay/HudOverlayRenderer.h"
 #include "../overlay/OverlayRenderer.h"
 #include "../recognition/V4OnnxModel.h"
 #include "../recognition/V4Recognizer.h"
+#include "../settings/AppSettings.h"
 #include <atomic>
+#include <deque>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <thread>
 
@@ -17,6 +24,7 @@ public:
     struct Config {
         AudioCaptureConfig audio;
         std::filesystem::path modelDirectory{"models/v4-candidate"};
+        std::filesystem::path settingsPath;
         bool        show_overlay{true};
     };
 
@@ -44,7 +52,19 @@ private:
     std::shared_ptr<V4OnnxModel> m_model;
     std::unique_ptr<V4Recognizer> m_recognizer;
     std::unique_ptr<OverlayRenderer> m_overlay;
+    std::unique_ptr<HudOverlayRenderer> m_hud;
     std::shared_ptr<V4RuntimeTuningStore> m_runtimeTuning;
+    std::shared_ptr<RuntimeSettingsStore> m_settings;
+    std::shared_ptr<CalibrationController> m_calibration;
+    AudioHistoryBuffer m_audioHistory{48000 * 3, 48000};
+    StereoDirectionEstimator m_directionEstimator;
+    struct PendingLocalization {
+        uint64_t eventId{0};
+        V4SoundEvent event;
+    };
+    std::deque<PendingLocalization> m_pendingLocalizations;
+    uint64_t m_nextEventId{1};
+    std::ofstream m_sessionLog;
     std::string m_modelVersion;
     uint32_t m_peakLookaheadFrames{0};
     std::string m_recognitionError;
@@ -54,6 +74,9 @@ private:
 
     void DSPLoop();
     void HandleEvent(const V4SoundEvent& event);
+    void ProcessPendingLocalizations();
+    void LogLocalizedEvent(const V4SoundEvent& event,
+                           const DirectionResult& direction);
 };
 
 } // namespace EchoRadar

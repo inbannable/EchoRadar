@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .annotation import review_timeline
+from .direction import generate_direction_corpus
 from .evaluation import evaluate_sessions
 from .inference import check_onnx_parity
 from .manifest import (
@@ -110,6 +111,15 @@ def main(argv: list[str] | None = None) -> int:
     annotate.add_argument("--wav", required=True, type=Path)
     annotate.add_argument("--labels", required=True, type=Path)
     annotate.add_argument("--predictions", type=Path)
+
+    direction = commands.add_parser(
+        "direction-corpus", help="render a deterministic known-bearing Steam Audio corpus"
+    )
+    direction.add_argument("--source-root", required=True, type=Path)
+    direction.add_argument("--output", required=True, type=Path)
+    direction.add_argument("--steam-audio-renderer", required=True, type=Path)
+    direction.add_argument("--azimuth-step", type=int, default=15)
+    direction.add_argument("--max-sources", type=int, default=0)
 
     args = parser.parse_args(argv)
     if args.command == "prepare-assets":
@@ -234,6 +244,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "annotate":
         review_timeline(args.wav, args.labels, args.predictions)
+        return 0
+    if args.command == "direction-corpus":
+        if args.azimuth_step <= 0 or 360 % args.azimuth_step != 0:
+            parser.error("--azimuth-step must be a positive divisor of 360")
+        sources = sorted(args.source_root.rglob("*.wav"))
+        if args.max_sources > 0:
+            sources = sources[:args.max_sources]
+        if not sources:
+            parser.error("--source-root contains no WAV files")
+        renderer = SteamAudioRenderer(args.steam_audio_renderer)
+        rendered = generate_direction_corpus(
+            sources, args.output, renderer,
+            tuple(float(angle) for angle in range(0, 360, args.azimuth_step)),
+        )
+        print(f"generated {len(rendered)} known-bearing clips in {args.output}")
         return 0
     return 2
 

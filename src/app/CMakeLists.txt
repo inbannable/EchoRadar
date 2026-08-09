@@ -20,6 +20,8 @@ target_link_libraries(EchoRadar
     PRIVATE
         echoradar_audio
         echoradar_recognition
+        echoradar_localization
+        echoradar_settings
         echoradar_overlay
 )
 

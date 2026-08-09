@@ -92,6 +92,7 @@ int main(int argc, char* argv[]) {
     // miniaudio exposes endpoint names as UTF-8. Match the console code page so
     // localized device names are not printed as mojibake.
     SetConsoleOutputCP(CP_UTF8);
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 #endif
     EchoRadar::EchoRadarApp::Config config;
     bool listOutputs = false;
@@ -106,6 +107,8 @@ int main(int argc, char* argv[]) {
         } else if (argument == "--model" && index + 1 < argc) {
             config.modelDirectory = argv[++index];
             modelWasExplicit = true;
+        } else if (argument == "--settings" && index + 1 < argc) {
+            config.settingsPath = argv[++index];
         } else if (argument == "--no-overlay") {
             config.show_overlay = false;
         } else if (argument == "--help" || argument == "-h") {
@@ -114,6 +117,7 @@ int main(int argc, char* argv[]) {
                 << "  --list-audio-outputs       List render endpoints for loopback\n"
                 << "  --audio-output-id <id>     Pin capture to one render endpoint\n"
                 << "  --model <package-dir>      Load an experimental V4 package\n"
+                << "  --settings <json>          Override the per-user settings path\n"
                 << "  --no-overlay               Do not initialize the V4 event chart UI\n";
             return 0;
         } else {

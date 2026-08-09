@@ -1,6 +1,6 @@
 # EchoRadar
 
-EchoRadar is a Windows C++20 project for recognizing important sounds in Counter-Strike 2 audio and, later, estimating their direction for a lightweight radar overlay. It now captures the Windows system-output stream directly, so playback can stay on the headphones without OBS or VB-CABLE in the capture path.
+EchoRadar is a Windows C++20 project for recognizing important sounds in Counter-Strike 2 audio, estimating their direction per event, and displaying uncertainty arcs in a lightweight center-screen HUD. It captures the Windows system-output stream directly, so playback can stay on the headphones without OBS or VB-CABLE in the capture path.
 
 The repository contains the original duration-based baseline and native v3 path, plus the CPU-ready v4 onset pipeline and an experimental native v4 runtime. A newly trained candidate can be connected to the main application immediately for engineering validation; it is not promoted as a production model until the locked real-data, accuracy, latency, source-suppression, export-parity, and native gates pass. See [the v4 training guide](ml/TRAINING_V4.md) and [the runtime guide](docs/audio_capture_v4_runtime.md).
 
@@ -18,8 +18,9 @@ The repository contains the original duration-based baseline and native v3 path,
 | Timeline reviewer | Working prototype | Waveform/spectrogram review, model-seeded markers, hotkeys, uncertain state, and atomic JSONL saves. |
 | Recognition accuracy | **Below gate** | Baseline results are recorded in [the recognition report](docs/recognition_baseline_v1.md). |
 | Real CS2 validation | Waiting for recordings | Import/audit tooling is ready, but no held-out continuous gameplay sessions have been supplied or labeled yet. |
-| Direction estimation | Deferred | Extracted assets have no known bearing labels; the current KNN code remains a placeholder. |
-| Main application and event chart | Experimental v4 connected | `EchoRadar.exe` starts loopback capture itself, shows a rolling V4 event timeline, and exposes live event-policy tuning; localization remains intentionally unchanged. |
+| Direction estimation | Working synthetic baseline + guided calibration | Each enabled event receives one 24-bin stereo estimate with confidence, uncertainty, optional secondary mode, and a profile-conditioned real-CS2 calibration path. |
+| Direction HUD | Implemented; Windows/CS2 smoke test required | A separate topmost click-through overlay follows CS2 in borderless mode and draws class-colored uncertainty arcs at screen center. |
+| Main application and event chart | Experimental v4 connected | `EchoRadar.exe` provides Live, Recognition, Direction, Calibration, Overlay, and Audio/System pages while preserving the full sound-tuning table and Pulse width control. |
 
 The automated suites validate algorithms and contracts, not real-game accuracy. A passing test suite must not be interpreted as recognition performance.
 
@@ -74,13 +75,20 @@ Place the training output at `models\v4-candidate` or pass another package direc
 .\build\src\app\Release\EchoRadar.exe --model models\v4-candidate
 ```
 
-On Windows, the executable opens the V4 event chart by default. The timeline shows
+On Windows, the executable opens the V4 event chart and direction HUD by default. The timeline shows
 gunshots and footsteps against the current stream time; the V4 tune table applies
 threshold, spacing, onset-offset, scene, self-suppression, and pulse-width changes
 on the next audio block. The live diagnostics panel also shows the current
 scene-activity sound-level score, capture RMS/peak in dBFS, and raw gunshot/footstep
 onset scores before peak/event gating. Use `--no-overlay` only for headless
-capture/recognition.
+capture/recognition. Direction defaults to footsteps only; gunshot localization
+can be enabled separately. The HUD defaults to CS2-foreground-only and expects
+Fullscreen Windowed/Borderless mode. Press `Ctrl+Alt+O` to hide or restore it.
+
+Direction and overlay settings are persisted in
+`%LOCALAPPDATA%\EchoRadar\settings.json`. Guided calibration and the rationale
+for audio-profile conditioning are documented in
+[the direction guide](docs/direction_estimation.md).
 
 List render endpoints and optionally pin one by its opaque ID:
 
@@ -195,7 +203,12 @@ Next steps are deliberately data-driven:
 2. Use the timeline reviewer to correct model suggestions and mark ambiguous sounds uncertain.
 3. Mine the generated error clips, improve the model/taxonomy, and rerun the locked reports without moving test sessions into training.
 4. Run the candidate through the native application, compare Python/native traces and timing, and keep it marked experimental until the gates pass.
-5. Start localization separately with known-bearing rendered audio and the same recorded CS2 audio profile.
+5. Generate the known-bearing direction corpus, then record calibrated and held-out real-CS2 bearings for each supported audio profile.
+
+The direction milestone now includes a working synthetic baseline and the
+known-bearing corpus command. Its next accuracy step is collecting repeatable
+real-CS2 calibration and held-out bearing sessions for each supported audio
+profile, not changing the event recognizer.
 
 Local extracted sounds, generated sessions, gameplay recordings, and model packages are ignored by Git and must not be redistributed.
 
@@ -209,7 +222,10 @@ tools/sound_eval/      Native offline evaluator
 tools/sound_recognizer Native live monitor
 tools/steam_audio_renderer Pinned v4.8.1 offline dataset renderer (optional build)
 src/app/               Built-in capture and experimental v4 application wiring
-src/dsp,...            Shared DSP, prototype detector, localization, and overlay modules
+src/localization/      Per-event stereo features, circular estimates, and guided calibration
+src/settings/          Persisted audio-profile, localization, HUD, and logging settings
+src/overlay/           Interactive control window and click-through direction HUD
+src/dsp,...            Shared DSP, detector, event, feature, and tracking modules
 tests/                 Native GoogleTest suite
 docs/                  Milestone contracts and measured reports
 ```
