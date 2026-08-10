@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 from pathlib import Path
 
 from .annotation import review_timeline
-from .direction import generate_direction_corpus
+from .direction import (
+    DirectionCorpusRow,
+    DirectionFeatures,
+    evaluate_direction_rows,
+    generate_direction_corpus,
+)
 from .evaluation import evaluate_sessions
 from .inference import check_onnx_parity
 from .manifest import (
@@ -120,6 +126,20 @@ def main(argv: list[str] | None = None) -> int:
     direction.add_argument("--steam-audio-renderer", required=True, type=Path)
     direction.add_argument("--azimuth-step", type=int, default=15)
     direction.add_argument("--max-sources", type=int, default=0)
+    direction.add_argument(
+        "--conditions", nargs="+",
+        default=("clean", "gain", "noise", "mild-reverb", "occlusion", "channel-isolation"),
+        choices=("clean", "gain", "noise", "mild-reverb", "occlusion", "channel-isolation"),
+    )
+
+    direction_evaluate = commands.add_parser(
+        "direction-evaluate", help="evaluate a direction corpus manifest against the v2 mapper"
+    )
+    direction_evaluate.add_argument("--manifest", required=True, type=Path)
+    direction_evaluate.add_argument("--output", type=Path)
+    direction_evaluate.add_argument("--error-clips", type=Path)
+    direction_evaluate.add_argument("--split", choices=("all", "train", "validation"),
+                                    default="all")
 
     args = parser.parse_args(argv)
     if args.command == "prepare-assets":
@@ -257,8 +277,28 @@ def main(argv: list[str] | None = None) -> int:
         rendered = generate_direction_corpus(
             sources, args.output, renderer,
             tuple(float(angle) for angle in range(0, 360, args.azimuth_step)),
+            conditions=args.conditions,
         )
         print(f"generated {len(rendered)} known-bearing clips in {args.output}")
+        return 0
+    if args.command == "direction-evaluate":
+        rows = []
+        for line in args.manifest.read_text(encoding="utf-8").splitlines():
+            payload = json.loads(line)
+            payload["features"] = DirectionFeatures(**payload["features"])
+            row = DirectionCorpusRow(**payload)
+            if args.split == "all" or row.source_split == args.split:
+                rows.append(row)
+        report = asdict(evaluate_direction_rows(
+            rows,
+            audio_root=args.manifest.parent,
+            error_clip_directory=args.error_clips,
+        ))
+        text = json.dumps(report, indent=2, sort_keys=True)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(text + "\n", encoding="utf-8")
+        print(text)
         return 0
     return 2
 

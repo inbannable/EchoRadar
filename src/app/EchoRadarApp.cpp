@@ -187,16 +187,23 @@ void EchoRadarApp::ProcessPendingLocalizations() {
     const AppSettings settings = m_settings->Snapshot();
     const uint64_t newest = m_audioHistory.GetNewestSampleExclusive();
     const uint64_t oldest = m_audioHistory.GetOldestSample();
-    const uint64_t windowFrames = static_cast<uint64_t>(
-        settings.localization.sampleWindowMs) * 48000u / 1000u;
     const uint64_t preFrames = static_cast<uint64_t>(
         settings.localization.preOnsetMs) * 48000u / 1000u;
 
     while (!m_pendingLocalizations.empty()) {
         const PendingLocalization pending = m_pendingLocalizations.front();
+        const auto& peakTuning = settings.localization.PeakWindowFor(
+            pending.event.soundClass);
         const uint64_t startSample = pending.event.onsetSample > preFrames
             ? pending.event.onsetSample - preFrames : 0;
-        const uint64_t endSample = startSample + windowFrames;
+        const uint64_t fallbackEnd = startSample + static_cast<uint64_t>(
+            settings.localization.sampleWindowMs) * 48000u / 1000u;
+        const uint64_t eventEnd = std::max(pending.event.endSample,
+                                           pending.event.onsetSample);
+        const uint64_t endSample = std::max(
+            fallbackEnd,
+            eventEnd + static_cast<uint64_t>(peakTuning.afterPeakMs) * 48000u / 1000u);
+        const uint64_t windowFrames = endSample - startSample;
         if (endSample > newest) break;
         m_pendingLocalizations.pop_front();
 
@@ -209,13 +216,32 @@ void EchoRadarApp::ProcessPendingLocalizations() {
             std::vector<float> clip;
             if (m_audioHistory.ExtractWindow(
                     startSample, static_cast<size_t>(windowFrames), clip)) {
-                // Persist the exact PCM window sent to the direction feature
-                // extractor, including when direction display is disabled.
-                clipPath = SaveEventClip(pending.eventId, pending.event, clip);
-                if (pending.enabled) {
+                PeakWindowSelection selection;
+                std::vector<float> selectedClip;
+                std::string selectionError;
+                const bool peakAccepted = m_directionEstimator.SelectPeakWindow(
+                    clip, peakTuning, selection, selectedClip, &selectionError);
+                // Persist the exact peak-centered PCM sent to the feature
+                // extractor. Rejected broad windows remain available for
+                // diagnosing the rejection.
+                clipPath = SaveEventClip(pending.eventId, pending.event,
+                                         peakAccepted ? selectedClip : clip);
+                direction.featureSchemaVersion = StereoDirectionFeatures::kSchemaVersion;
+                direction.mapperVersion = DeterministicDirectionMapper::kVersion;
+                direction.peakSample = startSample + selection.peakFrame;
+                direction.clipStartSample = startSample + selection.startFrame;
+                direction.clipEndSample = startSample + selection.endFrame;
+                direction.peakToNoiseDb = selection.peakToNoiseDb;
+                direction.activeFrameFraction = selection.activeFrameFraction;
+                if (pending.enabled && peakAccepted) {
                     StereoDirectionFeatures features;
                     std::string featureError;
-                    if (m_directionEstimator.ExtractFeatures(clip, features, &featureError)) {
+                    if (m_directionEstimator.ExtractFeatures(selectedClip, features, &featureError)) {
+                        features.peakSample = direction.peakSample;
+                        features.clipStartSample = direction.clipStartSample;
+                        features.clipEndSample = direction.clipEndSample;
+                        features.peakToNoiseDb = selection.peakToNoiseDb;
+                        features.activeFrameFraction = selection.activeFrameFraction;
                         const DirectionCalibrationProfile calibration =
                             m_calibration ? m_calibration->ProfileSnapshot()
                                           : DirectionCalibrationProfile{};
@@ -233,6 +259,8 @@ void EchoRadarApp::ProcessPendingLocalizations() {
                     } else {
                         direction.status = DirectionStatus::AudioUnavailable;
                     }
+                } else if (pending.enabled) {
+                    direction.status = DirectionStatus::LowConfidence;
                 }
             }
         }
@@ -298,6 +326,14 @@ void EchoRadarApp::LogLocalizedEvent(const V4SoundEvent& event,
                  << ",\"profile_source\":\"" << ToString(direction.profileSource) << "\""
                  << ",\"status\":\"" << ToString(direction.status) << "\""
                  << ",\"inference_ms\":" << direction.inferenceMilliseconds
+                 << ",\"peak_sample\":" << direction.peakSample
+                 << ",\"selected_clip_start_sample\":" << direction.clipStartSample
+                 << ",\"selected_clip_end_sample\":" << direction.clipEndSample
+                 << ",\"peak_to_noise_db\":" << direction.peakToNoiseDb
+                 << ",\"active_frame_fraction\":" << direction.activeFrameFraction
+                 << ",\"gcc_quality\":" << direction.gccQuality
+                 << ",\"feature_schema\":" << direction.featureSchemaVersion
+                 << ",\"mapper_version\":" << direction.mapperVersion
                  << ",\"clip_path\":\""
                  << detail::JsonEscapeStr(clipPath.string()) << "\""
                  << "}\n";

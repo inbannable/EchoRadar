@@ -1,5 +1,8 @@
 #include "CalibrationController.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace EchoRadar {
 
 CalibrationController::CalibrationController(std::filesystem::path path)
@@ -52,9 +55,17 @@ bool CalibrationController::AcceptArmedSample(
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_state.active || !m_state.armed || m_state.complete ||
         m_targetIndex >= m_targets.size()) return false;
-    if (features.rms < 1.0e-5f || features.correlationPeak < 0.05f) {
+    float coherence = 0.0f;
+    for (float value : features.bandCoherence) coherence += value;
+    coherence /= static_cast<float>(features.bandCoherence.size());
+    const float gccQuality = std::sqrt(
+        std::max(0.0f, features.gccSharpness * features.gccPeakToSidelobe));
+    if (features.schemaVersion != StereoDirectionFeatures::kSchemaVersion ||
+        features.rms < 1.0e-5f || features.peakToNoiseDb < 6.0f ||
+        features.activeFrameFraction < 0.015f || gccQuality < 0.08f ||
+        coherence < 0.15f || features.stereoQuality < 0.25f) {
         m_state.armed = false;
-        m_state.lastMessage = "Sample rejected: stereo signal quality was too low. Re-arm to retry.";
+        m_state.lastMessage = "Sample rejected: peak, GCC, or coherence quality was too low. Re-arm to retry.";
         return false;
     }
     m_profile.AddSample({soundClass, m_targets[m_targetIndex], features});

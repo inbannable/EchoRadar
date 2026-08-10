@@ -61,6 +61,16 @@ AppSettings AppSettings::Clamp(AppSettings settings) {
         settings.localization.sampleWindowMs, 100u, 600u);
     settings.localization.preOnsetMs = std::min(
         settings.localization.preOnsetMs, settings.localization.sampleWindowMs - 20u);
+    const auto clampPeak = [](LocalizationTuning::PeakWindowTuning& peak) {
+        peak.beforePeakMs = std::clamp(peak.beforePeakMs, 0u, 80u);
+        peak.afterPeakMs = std::clamp(peak.afterPeakMs, 30u, 300u);
+        peak.envelopeSmoothingMs = std::clamp(peak.envelopeSmoothingMs, 1u, 20u);
+        peak.minimumPeakToNoiseDb = std::clamp(peak.minimumPeakToNoiseDb, 0.0f, 40.0f);
+        peak.minimumActiveFrameFraction = std::clamp(
+            peak.minimumActiveFrameFraction, 0.001f, 0.8f);
+    };
+    clampPeak(settings.localization.footstepPeak);
+    clampPeak(settings.localization.gunshotPeak);
     settings.localization.minimumConfidence = std::clamp(
         settings.localization.minimumConfidence, 0.01f, 1.0f);
     settings.localization.secondaryRatio = std::clamp(
@@ -142,6 +152,26 @@ bool AppSettingsFile::Load(const std::filesystem::path& path,
         values, "localization_sample_ms", 240));
     loaded.localization.preOnsetMs = static_cast<uint32_t>(detail::GetU64(
         values, "localization_pre_onset_ms", 40));
+    loaded.localization.footstepPeak.beforePeakMs = static_cast<uint32_t>(detail::GetU64(
+        values, "footstep_peak_before_ms", 18));
+    loaded.localization.footstepPeak.afterPeakMs = static_cast<uint32_t>(detail::GetU64(
+        values, "footstep_peak_after_ms", 150));
+    loaded.localization.footstepPeak.envelopeSmoothingMs = static_cast<uint32_t>(detail::GetU64(
+        values, "footstep_peak_smoothing_ms", 4));
+    loaded.localization.footstepPeak.minimumPeakToNoiseDb = detail::GetFloatVal(
+        values, "footstep_peak_min_snr_db", 6.0f);
+    loaded.localization.footstepPeak.minimumActiveFrameFraction = detail::GetFloatVal(
+        values, "footstep_peak_min_active_fraction", 0.02f);
+    loaded.localization.gunshotPeak.beforePeakMs = static_cast<uint32_t>(detail::GetU64(
+        values, "gunshot_peak_before_ms", 8));
+    loaded.localization.gunshotPeak.afterPeakMs = static_cast<uint32_t>(detail::GetU64(
+        values, "gunshot_peak_after_ms", 75));
+    loaded.localization.gunshotPeak.envelopeSmoothingMs = static_cast<uint32_t>(detail::GetU64(
+        values, "gunshot_peak_smoothing_ms", 4));
+    loaded.localization.gunshotPeak.minimumPeakToNoiseDb = detail::GetFloatVal(
+        values, "gunshot_peak_min_snr_db", 7.0f);
+    loaded.localization.gunshotPeak.minimumActiveFrameFraction = detail::GetFloatVal(
+        values, "gunshot_peak_min_active_fraction", 0.015f);
     loaded.localization.minimumConfidence = detail::GetFloatVal(
         values, "localization_min_confidence", 0.35f);
     loaded.localization.showSecondaryDirection = detail::GetBoolVal(
@@ -203,6 +233,16 @@ bool AppSettingsFile::Save(const std::filesystem::path& path,
            << "  \"localize_gunshots\": " << (safe.localization.localizeGunshots ? "true" : "false") << ",\n"
            << "  \"localization_sample_ms\": " << safe.localization.sampleWindowMs << ",\n"
            << "  \"localization_pre_onset_ms\": " << safe.localization.preOnsetMs << ",\n"
+           << "  \"footstep_peak_before_ms\": " << safe.localization.footstepPeak.beforePeakMs << ",\n"
+           << "  \"footstep_peak_after_ms\": " << safe.localization.footstepPeak.afterPeakMs << ",\n"
+           << "  \"footstep_peak_smoothing_ms\": " << safe.localization.footstepPeak.envelopeSmoothingMs << ",\n"
+           << "  \"footstep_peak_min_snr_db\": " << safe.localization.footstepPeak.minimumPeakToNoiseDb << ",\n"
+           << "  \"footstep_peak_min_active_fraction\": " << safe.localization.footstepPeak.minimumActiveFrameFraction << ",\n"
+           << "  \"gunshot_peak_before_ms\": " << safe.localization.gunshotPeak.beforePeakMs << ",\n"
+           << "  \"gunshot_peak_after_ms\": " << safe.localization.gunshotPeak.afterPeakMs << ",\n"
+           << "  \"gunshot_peak_smoothing_ms\": " << safe.localization.gunshotPeak.envelopeSmoothingMs << ",\n"
+           << "  \"gunshot_peak_min_snr_db\": " << safe.localization.gunshotPeak.minimumPeakToNoiseDb << ",\n"
+           << "  \"gunshot_peak_min_active_fraction\": " << safe.localization.gunshotPeak.minimumActiveFrameFraction << ",\n"
            << "  \"localization_min_confidence\": " << safe.localization.minimumConfidence << ",\n"
            << "  \"show_secondary_direction\": " << (safe.localization.showSecondaryDirection ? "true" : "false") << ",\n"
            << "  \"secondary_ratio\": " << safe.localization.secondaryRatio << ",\n"

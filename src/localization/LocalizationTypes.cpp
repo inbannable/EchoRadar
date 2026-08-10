@@ -7,6 +7,11 @@
 
 namespace EchoRadar {
 
+const LocalizationTuning::PeakWindowTuning& LocalizationTuning::PeakWindowFor(
+    SoundClass soundClass) const {
+    return soundClass == SoundClass::Gunshot ? gunshotPeak : footstepPeak;
+}
+
 std::string AudioProfile::StableKey() const {
     std::ostringstream output;
     output << "profile-v1|" << ToString(eqProfile) << '|'

@@ -3,6 +3,7 @@
 #include <settings/AppSettings.h>
 
 #include <filesystem>
+#include <fstream>
 
 using namespace EchoRadar;
 
@@ -19,6 +20,9 @@ TEST(AppSettings, RoundTripPreservesAudioLocalizationAndOverlaySettings) {
     source.localization.localizeGunshots = true;
     source.localization.showSecondaryDirection = true;
     source.localization.sampleWindowMs = 320;
+    source.localization.footstepPeak.beforePeakMs = 20;
+    source.localization.footstepPeak.afterPeakMs = 160;
+    source.localization.gunshotPeak.minimumPeakToNoiseDb = 9.0f;
     source.overlay.visibility = OverlaySettings::Visibility::Always;
     source.overlay.radiusPixels = 144.0f;
     source.uiScale = 1.5f;
@@ -34,9 +38,34 @@ TEST(AppSettings, RoundTripPreservesAudioLocalizationAndOverlaySettings) {
     EXPECT_TRUE(loaded.localization.localizeGunshots);
     EXPECT_TRUE(loaded.localization.showSecondaryDirection);
     EXPECT_EQ(loaded.localization.sampleWindowMs, 320u);
+    EXPECT_EQ(loaded.localization.footstepPeak.beforePeakMs, 20u);
+    EXPECT_EQ(loaded.localization.footstepPeak.afterPeakMs, 160u);
+    EXPECT_FLOAT_EQ(loaded.localization.gunshotPeak.minimumPeakToNoiseDb, 9.0f);
     EXPECT_EQ(loaded.overlay.visibility, OverlaySettings::Visibility::Always);
     EXPECT_FLOAT_EQ(loaded.overlay.radiusPixels, 144.0f);
     EXPECT_FLOAT_EQ(loaded.uiScale, 1.5f);
+    std::filesystem::remove_all(root);
+}
+
+TEST(AppSettings, MigratesLegacyBroadWindowSettingsToClassPeakDefaults) {
+    const auto root = std::filesystem::temp_directory_path() /
+        "echoradar-settings-v1-migration-test";
+    std::filesystem::create_directories(root);
+    const auto path = root / "settings.json";
+    {
+        std::ofstream output(path);
+        output << "{\"schema_version\":1,\"localization_sample_ms\":300,"
+                  "\"localization_pre_onset_ms\":50}";
+    }
+    AppSettings loaded;
+    std::string error;
+    ASSERT_TRUE(AppSettingsFile::Load(path, loaded, &error)) << error;
+    EXPECT_EQ(loaded.localization.sampleWindowMs, 300u);
+    EXPECT_EQ(loaded.localization.preOnsetMs, 50u);
+    EXPECT_EQ(loaded.localization.footstepPeak.beforePeakMs, 18u);
+    EXPECT_EQ(loaded.localization.footstepPeak.afterPeakMs, 150u);
+    EXPECT_EQ(loaded.localization.gunshotPeak.beforePeakMs, 8u);
+    EXPECT_EQ(loaded.localization.gunshotPeak.afterPeakMs, 75u);
     std::filesystem::remove_all(root);
 }
 

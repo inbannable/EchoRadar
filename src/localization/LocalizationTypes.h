@@ -1,5 +1,7 @@
 #pragma once
 
+#include <recognition/SoundRecognitionTypes.h>
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -76,14 +78,29 @@ struct AudioProfile {
 };
 
 struct LocalizationTuning {
+    struct PeakWindowTuning {
+        uint32_t beforePeakMs{18};
+        uint32_t afterPeakMs{150};
+        uint32_t envelopeSmoothingMs{4};
+        float minimumPeakToNoiseDb{6.0f};
+        float minimumActiveFrameFraction{0.02f};
+    };
+
     bool localizeFootsteps{true};
     bool localizeGunshots{true};
+    // Legacy broad-window settings are retained for event search and settings
+    // migration. The class-specific peak windows below are authoritative for
+    // feature extraction.
     uint32_t sampleWindowMs{240};
     uint32_t preOnsetMs{40};
+    PeakWindowTuning footstepPeak{};
+    PeakWindowTuning gunshotPeak{8, 75, 4, 7.0f, 0.015f};
     float minimumConfidence{0.35f};
     bool showSecondaryDirection{false};
     float secondaryRatio{0.75f};
     float secondaryMinimumSeparationDegrees{60.0f};
+
+    const PeakWindowTuning& PeakWindowFor(SoundClass soundClass) const;
 };
 
 struct OverlaySettings {
@@ -114,6 +131,14 @@ struct DirectionResult {
     DirectionProfileSource profileSource{DirectionProfileSource::Synthetic};
     DirectionStatus status{DirectionStatus::AudioUnavailable};
     double inferenceMilliseconds{0.0};
+    uint32_t featureSchemaVersion{0};
+    uint32_t mapperVersion{0};
+    uint64_t peakSample{0};
+    uint64_t clipStartSample{0};
+    uint64_t clipEndSample{0};
+    float peakToNoiseDb{0.0f};
+    float activeFrameFraction{0.0f};
+    float gccQuality{0.0f};
     std::array<float, 24> probabilities{};
 };
 

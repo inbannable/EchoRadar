@@ -899,6 +899,38 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
             settings.localization.preOnsetMs = static_cast<uint32_t>(preMs);
             changed = true;
         }
+        nextSetting("Footstep peak pre / post");
+        int footstepPeakWindow[2]{
+            static_cast<int>(settings.localization.footstepPeak.beforePeakMs),
+            static_cast<int>(settings.localization.footstepPeak.afterPeakMs)};
+        if (ImGui::SliderInt2("##footstep_peak_window", footstepPeakWindow,
+                              0, 240, "%d ms")) {
+            settings.localization.footstepPeak.beforePeakMs =
+                static_cast<uint32_t>(footstepPeakWindow[0]);
+            settings.localization.footstepPeak.afterPeakMs =
+                static_cast<uint32_t>(footstepPeakWindow[1]);
+            changed = true;
+        }
+        nextSetting("Footstep minimum peak SNR");
+        changed |= ImGui::SliderFloat("##footstep_peak_snr",
+                                      &settings.localization.footstepPeak.minimumPeakToNoiseDb,
+                                      0.0f, 24.0f, "%.1f dB");
+        nextSetting("Gunshot peak pre / post");
+        int gunshotPeakWindow[2]{
+            static_cast<int>(settings.localization.gunshotPeak.beforePeakMs),
+            static_cast<int>(settings.localization.gunshotPeak.afterPeakMs)};
+        if (ImGui::SliderInt2("##gunshot_peak_window", gunshotPeakWindow,
+                              0, 240, "%d ms")) {
+            settings.localization.gunshotPeak.beforePeakMs =
+                static_cast<uint32_t>(gunshotPeakWindow[0]);
+            settings.localization.gunshotPeak.afterPeakMs =
+                static_cast<uint32_t>(gunshotPeakWindow[1]);
+            changed = true;
+        }
+        nextSetting("Gunshot minimum peak SNR");
+        changed |= ImGui::SliderFloat("##gunshot_peak_snr",
+                                      &settings.localization.gunshotPeak.minimumPeakToNoiseDb,
+                                      0.0f, 24.0f, "%.1f dB");
         nextSetting("Minimum confidence");
         changed |= ImGui::SliderFloat("##direction_confidence",
                                       &settings.localization.minimumConfidence,
@@ -957,7 +989,7 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
                            "Clip playback: %s", m_clipPlaybackError.c_str());
     }
     ImGui::TextUnformatted("Recent direction estimates");
-    if (ImGui::BeginTable("DirectionEvents", 8,
+    if (ImGui::BeginTable("DirectionEvents", 10,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
                               ImGuiTableFlags_ScrollY,
                           ImVec2(0.0f, 230.0f))) {
@@ -965,6 +997,8 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Angle");
         ImGui::TableSetupColumn("Conf.");
+        ImGui::TableSetupColumn("Peak SNR");
+        ImGui::TableSetupColumn("GCC");
         ImGui::TableSetupColumn("Arc");
         ImGui::TableSetupColumn("Profile");
         ImGui::TableSetupColumn("Status");
@@ -982,6 +1016,10 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
             ImGui::Text("%.0f deg", iterator->direction.primaryAngleDegrees);
             ImGui::TableNextColumn();
             ImGui::Text("%.2f", iterator->direction.confidence);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f dB", iterator->direction.peakToNoiseDb);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", iterator->direction.gccQuality);
             ImGui::TableNextColumn();
             ImGui::Text("+/-%.0f", iterator->direction.uncertaintyDegrees);
             ImGui::TableNextColumn();
