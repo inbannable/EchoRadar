@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <utility>
 
 #ifdef _WIN32
 
@@ -20,6 +21,7 @@
 
 #include <d3d11.h>
 #include <windows.h>
+#include <mmsystem.h>
 
 #include <imgui.h>
 #include <backends/imgui_impl_dx11.h>
@@ -282,6 +284,7 @@ bool OverlayRenderer::Initialise() {
 
 void OverlayRenderer::Shutdown() {
 #ifdef _WIN32
+    StopClip();
     if (m_platform) {
         if (m_platform->imguiInitialized) {
             ImGui::SetCurrentContext(m_platform->imguiContext);
@@ -332,9 +335,10 @@ void OverlayRenderer::PushV4Event(const V4SoundEvent& event) {
 }
 
 void OverlayRenderer::PushLocalizedEvent(const V4SoundEvent& event,
-                                         const DirectionResult& direction) {
+                                         const DirectionResult& direction,
+                                         std::filesystem::path clipPath) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_localizedEvents.push_back({event, direction});
+    m_localizedEvents.push_back({event, direction, std::move(clipPath)});
     constexpr size_t kMaximumLocalizedEvents = 256;
     while (m_localizedEvents.size() > kMaximumLocalizedEvents) {
         m_localizedEvents.pop_front();
@@ -938,8 +942,22 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
     if (changed) m_cfg.runtime_settings->Update(settings, true, nullptr);
 
     ImGui::Spacing();
+    if (!m_cfg.clip_directory.empty()) {
+        ImGui::TextDisabled("Event clips: %s", m_cfg.clip_directory.string().c_str());
+    } else {
+        ImGui::TextDisabled("Event clips are unavailable; the clip directory could not be created.");
+    }
+    if (!m_playingClipPath.empty()) {
+        if (ImGui::SmallButton("Stop playback")) StopClip();
+        ImGui::SameLine();
+        ImGui::TextDisabled("Last played: %s", m_playingClipPath.filename().string().c_str());
+    }
+    if (!m_clipPlaybackError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
+                           "Clip playback: %s", m_clipPlaybackError.c_str());
+    }
     ImGui::TextUnformatted("Recent direction estimates");
-    if (ImGui::BeginTable("DirectionEvents", 7,
+    if (ImGui::BeginTable("DirectionEvents", 8,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
                               ImGuiTableFlags_ScrollY,
                           ImVec2(0.0f, 230.0f))) {
@@ -950,6 +968,7 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
         ImGui::TableSetupColumn("Arc");
         ImGui::TableSetupColumn("Profile");
         ImGui::TableSetupColumn("Status");
+        ImGui::TableSetupColumn("Audio");
         ImGui::TableHeadersRow();
         size_t shown = 0;
         for (auto iterator = events.rbegin(); iterator != events.rend() && shown < 24;
@@ -969,6 +988,17 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
             ImGui::TextUnformatted(ToString(iterator->direction.profileSource));
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(ToString(iterator->direction.status));
+            ImGui::TableNextColumn();
+            if (iterator->clipPath.empty()) {
+                ImGui::TextDisabled("n/a");
+            } else {
+                const std::string buttonId = "Play##clip_" +
+                    std::to_string(iterator->direction.eventId);
+                if (ImGui::SmallButton(buttonId.c_str())) PlayClip(iterator->clipPath);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", iterator->clipPath.string().c_str());
+                }
+            }
         }
         if (shown == 0) {
             ImGui::TableNextRow();
@@ -978,6 +1008,35 @@ void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& event
         ImGui::EndTable();
     }
 }
+
+#ifdef _WIN32
+
+void OverlayRenderer::PlayClip(const std::filesystem::path& path) {
+    m_clipPlaybackError.clear();
+    if (path.empty()) {
+        m_clipPlaybackError = "No audio clip was saved for this event.";
+        return;
+    }
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) {
+        m_clipPlaybackError = "The saved WAV file is no longer available.";
+        return;
+    }
+    const std::wstring widePath = path.wstring();
+    if (!PlaySoundW(widePath.c_str(), nullptr,
+                    SND_FILENAME | SND_ASYNC | SND_NODEFAULT)) {
+        m_clipPlaybackError = "Windows could not start WAV playback.";
+        return;
+    }
+    m_playingClipPath = path;
+}
+
+void OverlayRenderer::StopClip() {
+    PlaySoundW(nullptr, nullptr, 0);
+    m_playingClipPath.clear();
+}
+
+#endif
 
 void OverlayRenderer::DrawCalibrationPage() {
     if (!m_cfg.calibration || !m_cfg.runtime_settings) {

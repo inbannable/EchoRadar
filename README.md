@@ -90,6 +90,10 @@ Direction and overlay settings are persisted in
 for audio-profile conditioning are documented in
 [the direction guide](docs/direction_estimation.md).
 
+The Direction page also saves the exact stereo window used for each accepted V4
+event as a WAV under `%LOCALAPPDATA%\EchoRadar\sessions\clips\<session-id>\` and
+provides a **Play** button for listening to it.
+
 List render endpoints and optionally pin one by its opaque ID:
 
 ```powershell

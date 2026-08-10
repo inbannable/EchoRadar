@@ -1,5 +1,8 @@
 #include "EchoRadarApp.h"
 
+#include "../dataset/DatasetJson.h"
+#include "../recognition/PcmWav.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -30,6 +33,21 @@ bool EchoRadarApp::Initialise() {
     std::string settingsMessage;
     if (!m_settings->Load(&settingsMessage)) {
         std::cout << "[EchoRadar] " << settingsMessage << '\n';
+    }
+    const auto settingsDirectory = settingsPath.parent_path().empty()
+        ? std::filesystem::current_path() : settingsPath.parent_path();
+    m_clipSessionTag = "session-" + std::to_string(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    m_clipDirectory = settingsDirectory / "sessions" / "clips" / m_clipSessionTag;
+    {
+        std::error_code error;
+        std::filesystem::create_directories(m_clipDirectory, error);
+        if (error) {
+            std::cerr << "[EchoRadar] Event audio clips could not be saved: "
+                      << error.message() << '\n';
+            m_clipDirectory.clear();
+        }
     }
     m_calibration = std::make_shared<CalibrationController>(
         settingsPath.parent_path() / "direction-calibration.tsv");
@@ -100,6 +118,7 @@ bool EchoRadarApp::Initialise() {
         overlayConfig.v4_tuning = m_runtimeTuning;
         overlayConfig.runtime_settings = m_settings;
         overlayConfig.calibration = m_calibration;
+        overlayConfig.clip_directory = m_clipDirectory;
         m_overlay = std::make_unique<OverlayRenderer>(std::move(overlayConfig));
         if (!m_overlay->Initialise()) {
             std::cerr << "[EchoRadar] Event chart UI could not be initialized; continuing headless.\n";
@@ -150,9 +169,9 @@ void EchoRadarApp::HandleEvent(const V4SoundEvent& event) {
     const bool enabled = event.soundClass == SoundClass::Gunshot
         ? settings.localization.localizeGunshots
         : settings.localization.localizeFootsteps;
-    if (enabled) {
-        m_pendingLocalizations.push_back({m_nextEventId++, event});
-    }
+    // Keep the clip job even when direction display is disabled. The same
+    // audio window is useful for listening and recognition debugging.
+    m_pendingLocalizations.push_back({m_nextEventId++, event, enabled});
     std::printf(
         "\n[V4 %s] source=%s scene=%s confidence=%.3f onset=%.3fs detected=%.3fs "
         "delivered=%.3fs stream=%llu\n",
@@ -183,43 +202,49 @@ void EchoRadarApp::ProcessPendingLocalizations() {
 
         DirectionResult direction;
         direction.eventId = pending.eventId;
-        if (startSample < oldest) {
-            direction.status = DirectionStatus::AudioUnavailable;
-        } else {
+        direction.status = pending.enabled
+            ? DirectionStatus::AudioUnavailable : DirectionStatus::Disabled;
+        std::filesystem::path clipPath;
+        if (startSample >= oldest) {
             std::vector<float> clip;
             if (m_audioHistory.ExtractWindow(
                     startSample, static_cast<size_t>(windowFrames), clip)) {
-                StereoDirectionFeatures features;
-                std::string featureError;
-                if (m_directionEstimator.ExtractFeatures(clip, features, &featureError)) {
-                    const DirectionCalibrationProfile calibration =
-                        m_calibration ? m_calibration->ProfileSnapshot()
-                                      : DirectionCalibrationProfile{};
-                    const auto inferenceStart = std::chrono::steady_clock::now();
-                    direction = m_directionEstimator.EstimateFeatures(
-                        pending.eventId, pending.event.soundClass, features,
-                        settings.audioProfile, settings.localization, &calibration);
-                    direction.inferenceMilliseconds =
-                        std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - inferenceStart).count();
-                    if (m_calibration && m_calibration->AcceptArmedSample(
-                            pending.event.soundClass, features)) {
-                        m_calibration->Save(nullptr);
+                // Persist the exact PCM window sent to the direction feature
+                // extractor, including when direction display is disabled.
+                clipPath = SaveEventClip(pending.eventId, pending.event, clip);
+                if (pending.enabled) {
+                    StereoDirectionFeatures features;
+                    std::string featureError;
+                    if (m_directionEstimator.ExtractFeatures(clip, features, &featureError)) {
+                        const DirectionCalibrationProfile calibration =
+                            m_calibration ? m_calibration->ProfileSnapshot()
+                                          : DirectionCalibrationProfile{};
+                        const auto inferenceStart = std::chrono::steady_clock::now();
+                        direction = m_directionEstimator.EstimateFeatures(
+                            pending.eventId, pending.event.soundClass, features,
+                            settings.audioProfile, settings.localization, &calibration);
+                        direction.inferenceMilliseconds =
+                            std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - inferenceStart).count();
+                        if (m_calibration && m_calibration->AcceptArmedSample(
+                                pending.event.soundClass, features)) {
+                            m_calibration->Save(nullptr);
+                        }
+                    } else {
+                        direction.status = DirectionStatus::AudioUnavailable;
                     }
-                } else {
-                    direction.status = DirectionStatus::AudioUnavailable;
                 }
-            } else {
-                direction.status = DirectionStatus::AudioUnavailable;
             }
         }
 
-        if (m_overlay) m_overlay->PushLocalizedEvent(pending.event, direction);
+        if (m_overlay) {
+            m_overlay->PushLocalizedEvent(pending.event, direction, clipPath);
+        }
         if (m_hud && (direction.status == DirectionStatus::Estimated ||
                       direction.status == DirectionStatus::LowConfidence)) {
             m_hud->PushEvent(pending.event, direction);
         }
-        LogLocalizedEvent(pending.event, direction);
+        LogLocalizedEvent(pending.event, direction, clipPath);
         std::printf("[DIR %s] angle=%.0f confidence=%.3f uncertainty=%.0f "
                     "profile=%s status=%s\n",
                     ToString(pending.event.soundClass), direction.primaryAngleDegrees,
@@ -228,8 +253,29 @@ void EchoRadarApp::ProcessPendingLocalizations() {
     }
 }
 
+std::filesystem::path EchoRadarApp::SaveEventClip(
+    uint64_t eventId, const V4SoundEvent& event, const std::vector<float>& clip) {
+    if (m_clipDirectory.empty() || clip.empty()) return {};
+
+    const std::filesystem::path path = m_clipDirectory /
+        ("event-" + std::to_string(eventId) + "-" +
+         ToString(event.soundClass) + ".wav");
+    PcmAudio audio;
+    audio.sampleRate = 48000;
+    audio.channels = 2;
+    audio.interleaved = clip;
+    std::string error;
+    if (!WritePcm16Wav(path, audio, &error)) {
+        std::cerr << "[EchoRadar] Could not save event audio clip "
+                  << path << ": " << error << '\n';
+        return {};
+    }
+    return path;
+}
+
 void EchoRadarApp::LogLocalizedEvent(const V4SoundEvent& event,
-                                     const DirectionResult& direction) {
+                                     const DirectionResult& direction,
+                                     const std::filesystem::path& clipPath) {
     if (!m_settings || !m_settings->Snapshot().sessionLogging) return;
     if (!m_sessionLog) {
         std::error_code error;
@@ -252,6 +298,8 @@ void EchoRadarApp::LogLocalizedEvent(const V4SoundEvent& event,
                  << ",\"profile_source\":\"" << ToString(direction.profileSource) << "\""
                  << ",\"status\":\"" << ToString(direction.status) << "\""
                  << ",\"inference_ms\":" << direction.inferenceMilliseconds
+                 << ",\"clip_path\":\""
+                 << detail::JsonEscapeStr(clipPath.string()) << "\""
                  << "}\n";
     m_sessionLog.flush();
 }

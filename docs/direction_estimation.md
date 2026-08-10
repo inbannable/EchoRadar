@@ -44,9 +44,12 @@ profile-specific front/rear behavior.
 
 1. WASAPI loopback writes sequential 48 kHz stereo frames to the recognizer and
    a three-second history buffer.
-2. Every accepted, enabled event creates exactly one pending localization job.
+2. Every accepted event creates exactly one pending audio/localization job.
 3. After the configured post-onset audio is available, the job copies its own
-   window and runs the estimator once.
+   window, saves that exact stereo window as a PCM16 WAV, and runs the estimator
+   once when that class is enabled. The Direction page's **Play** button replays
+   the saved file; clips are stored under `sessions/clips/<session-id>/` beside
+   the settings file.
 4. Low-confidence estimates are still drawn with reduced opacity so accepted
    recognizer events do not silently disappear; unavailable audio remains in
    diagnostics because it has no defensible bearing.

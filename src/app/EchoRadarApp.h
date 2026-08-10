@@ -14,6 +14,7 @@
 #include <fstream>
 #include <memory>
 #include <thread>
+#include <vector>
 
 namespace EchoRadar {
 
@@ -61,10 +62,13 @@ private:
     struct PendingLocalization {
         uint64_t eventId{0};
         V4SoundEvent event;
+        bool enabled{true};
     };
     std::deque<PendingLocalization> m_pendingLocalizations;
     uint64_t m_nextEventId{1};
     std::ofstream m_sessionLog;
+    std::filesystem::path m_clipDirectory;
+    std::string m_clipSessionTag;
     std::string m_modelVersion;
     uint32_t m_peakLookaheadFrames{0};
     std::string m_recognitionError;
@@ -75,8 +79,12 @@ private:
     void DSPLoop();
     void HandleEvent(const V4SoundEvent& event);
     void ProcessPendingLocalizations();
+    std::filesystem::path SaveEventClip(uint64_t eventId,
+                                         const V4SoundEvent& event,
+                                         const std::vector<float>& clip);
     void LogLocalizedEvent(const V4SoundEvent& event,
-                           const DirectionResult& direction);
+                           const DirectionResult& direction,
+                           const std::filesystem::path& clipPath);
 };
 
 } // namespace EchoRadar

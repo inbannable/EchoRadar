@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,6 +34,7 @@ public:
         std::shared_ptr<V4RuntimeTuningStore> v4_tuning;
         std::shared_ptr<RuntimeSettingsStore> runtime_settings;
         std::shared_ptr<CalibrationController> calibration;
+        std::filesystem::path clip_directory;
     };
 
     OverlayRenderer();
@@ -51,7 +53,8 @@ public:
     void PushGunshot (const GunshotEvent&      ev, const DirectionEstimate& dir);
     void PushV4Event(const V4SoundEvent& event);
     void PushLocalizedEvent(const V4SoundEvent& event,
-                            const DirectionResult& direction);
+                            const DirectionResult& direction,
+                            std::filesystem::path clipPath = {});
     void PushAudioClock(uint64_t sample, uint64_t streamGeneration,
                         bool discontinuity = false);
     void PushAudioLevels(const AudioLevels& levels);
@@ -84,6 +87,7 @@ private:
     struct LocalizedRecord {
         V4SoundEvent event;
         DirectionResult direction;
+        std::filesystem::path clipPath;
     };
     std::deque<LocalizedRecord> m_localizedEvents;
     uint64_t m_currentSample{0};
@@ -95,6 +99,8 @@ private:
     float m_chartWindowSeconds{30.0f};
     float m_appliedUiScale{1.0f};
     std::vector<ActiveMarker> m_markers;
+    std::filesystem::path m_playingClipPath;
+    std::string m_clipPlaybackError;
 
     void DrawUi();
     void ApplyUiScale(float scale);
@@ -110,6 +116,11 @@ private:
     void DrawCalibrationPage();
     void DrawOverlayPage();
     void DrawAudioSystemPage();
+
+#ifdef _WIN32
+    void PlayClip(const std::filesystem::path& path);
+    void StopClip();
+#endif
 };
 
 } // namespace EchoRadar
