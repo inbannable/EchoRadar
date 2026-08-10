@@ -83,8 +83,15 @@ def extract_direction_features(
         raise ValueError("direction input must be stereo and contain at least one FFT window")
     left = stereo[:, 0].astype(np.float64)
     right = stereo[:, 1].astype(np.float64)
-    left_energy = float(np.dot(left, left))
-    right_energy = float(np.dot(right, right))
+    peak_envelope = float(np.max(np.maximum(np.abs(left), np.abs(right))))
+    activity = np.clip(
+        np.maximum(np.abs(left), np.abs(right)) / max(1.0e-9, peak_envelope * 0.5),
+        0.0,
+        1.0,
+    )
+    activity_weights = 0.08 + 0.92 * np.square(activity)
+    left_energy = float(np.dot(activity_weights, np.square(left)))
+    right_energy = float(np.dot(activity_weights, np.square(right)))
     signal_rms = float(np.sqrt((left_energy + right_energy) / (2.0 * len(stereo))))
     if signal_rms < 1.0e-6:
         raise ValueError("direction input is silent")
@@ -92,18 +99,38 @@ def extract_direction_features(
     best_correlation = -np.inf
     best_lag = 0
     maximum_lag = min(maximum_lag_samples, len(stereo) // 4)
+    lag_correlations: list[float] = []
     for lag in range(-maximum_lag, maximum_lag + 1):
         left_start = -lag if lag < 0 else 0
         right_start = lag if lag > 0 else 0
         count = len(stereo) - abs(lag)
         lag_left = left[left_start:left_start + count]
         lag_right = right[right_start:right_start + count]
-        denominator = np.sqrt(max(1.0e-18, float(np.dot(lag_left, lag_left) *
-                                                 np.dot(lag_right, lag_right))))
-        correlation = float(np.dot(lag_left, lag_right) / denominator)
+        envelope = np.maximum(np.abs(lag_left), np.abs(lag_right))
+        lag_activity = np.clip(
+            envelope / max(1.0e-9, peak_envelope * 0.5), 0.0, 1.0
+        )
+        weights = 0.08 + 0.92 * np.square(lag_activity)
+        lag_left_energy = float(np.dot(weights, np.square(lag_left)))
+        lag_right_energy = float(np.dot(weights, np.square(lag_right)))
+        denominator = np.sqrt(max(1.0e-18, lag_left_energy * lag_right_energy))
+        correlation = float(np.dot(weights, lag_left * lag_right) / denominator)
+        lag_correlations.append(correlation)
         if correlation > best_correlation:
             best_correlation = correlation
             best_lag = lag
+
+    refined_lag = float(best_lag)
+    if -maximum_lag < best_lag < maximum_lag:
+        center_index = best_lag + maximum_lag
+        previous = lag_correlations[center_index - 1]
+        center = lag_correlations[center_index]
+        following = lag_correlations[center_index + 1]
+        curvature = previous - 2.0 * center + following
+        if abs(curvature) > 1.0e-6:
+            refined_lag += float(np.clip(
+                0.5 * (previous - following) / curvature, -0.5, 0.5
+            ))
 
     starts = np.arange(0, len(stereo) - fft_size + 1, hop_size)
     window = np.hanning(fft_size).astype(np.float64)
@@ -128,7 +155,7 @@ def extract_direction_features(
     ild_spread = float(np.std(band_ild))
     asymmetry = max(
         abs(_safe_db_ratio(left_energy, right_energy)) / 9.0,
-        abs(float(-best_lag)) / 12.0,
+        abs(float(-refined_lag)) / 12.0,
         ild_spread / 8.0,
     )
     stereo_quality = float(np.clip(
@@ -138,7 +165,7 @@ def extract_direction_features(
     ))
     return DirectionFeatures(
         broadband_ild_db=_safe_db_ratio(left_energy, right_energy),
-        itd_samples=float(-best_lag),
+        itd_samples=float(-refined_lag),
         correlation_peak=float(np.clip(best_correlation, -1.0, 1.0)),
         stereo_quality=stereo_quality,
         rms=signal_rms,

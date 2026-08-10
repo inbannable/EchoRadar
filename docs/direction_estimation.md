@@ -7,7 +7,7 @@ a 24-bin circular probability distribution. The HUD displays the primary mode
 as an uncertainty arc; an optional second arc exposes a sufficiently strong,
 well-separated front/rear candidate instead of presenting false precision.
 
-The default policy localizes footsteps and leaves gunshots disabled. The
+The default policy localizes both footsteps and gunshots. The
 recognition **Pulse width** remains a chart/event-display control. The separate
 **Localization sample length** determines how much stereo audio contributes to
 one direction estimate.
@@ -47,8 +47,9 @@ profile-specific front/rear behavior.
 2. Every accepted, enabled event creates exactly one pending localization job.
 3. After the configured post-onset audio is available, the job copies its own
    window and runs the estimator once.
-4. Low-quality or low-confidence estimates remain in diagnostics and are not
-   drawn on the HUD.
+4. Low-confidence estimates are still drawn with reduced opacity so accepted
+   recognizer events do not silently disappear; unavailable audio remains in
+   diagnostics because it has no defensible bearing.
 5. Estimated events are logged to `sessions/latest.jsonl` beside `settings.json`.
 
 Discontinuities, default-device changes, and backlog resets clear both history
@@ -69,10 +70,12 @@ shows whether the current profile matches or is stale.
 
 ## HUD behavior
 
-The HUD is a separate topmost, click-through Windows window with three modes:
+The HUD is a separate topmost, non-activating, click-through Windows window with three modes:
 off, CS2 foreground only, or always visible. It follows the CS2 client rectangle
 and exposes radius, thickness, opacity, offsets, class lifetimes, center dot,
-and secondary-candidate controls. `Ctrl+Alt+O` hides or restores it globally.
+and secondary-candidate controls. The HUD never owns or changes the mouse
+cursor, so CS2 keeps the cursor hidden during borderless-fullscreen play and
+all clicks continue to reach the game. `Ctrl+Alt+O` hides or restores it globally.
 
 Use CS2 Fullscreen Windowed/Borderless. Exclusive fullscreen may bypass normal
 desktop composition. Microsoft documents that composition targets and layered

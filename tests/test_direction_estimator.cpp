@@ -42,6 +42,9 @@ TEST(StereoDirectionEstimator, ChannelSwapMirrorsPrimaryDirection) {
     LocalizationTuning tuning;
     tuning.minimumConfidence = 0.01f;
     const auto right = DirectionFixture(7);
+    StereoDirectionFeatures rightFeatures;
+    ASSERT_TRUE(estimator.ExtractFeatures(right, rightFeatures));
+    EXPECT_NEAR(std::abs(rightFeatures.itdSamples), 7.0f, 0.75f);
     std::vector<float> swapped(right.size());
     for (size_t frame = 0; frame < right.size() / 2; ++frame) {
         swapped[frame * 2] = right[frame * 2 + 1];

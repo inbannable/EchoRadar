@@ -220,13 +220,26 @@ bool StereoDirectionEstimator::ExtractFeatures(
         return false;
     }
     const size_t frameCount = interleaved.size() / 2;
+    float peakEnvelope = 0.0f;
+    for (size_t frame = 0; frame < frameCount; ++frame) {
+        peakEnvelope = std::max(peakEnvelope, std::max(
+            std::abs(interleaved[frame * 2]),
+            std::abs(interleaved[frame * 2 + 1])));
+    }
     double leftEnergy = 0.0;
     double rightEnergy = 0.0;
     for (size_t frame = 0; frame < frameCount; ++frame) {
         const double left = interleaved[frame * 2];
         const double right = interleaved[frame * 2 + 1];
-        leftEnergy += left * left;
-        rightEnergy += right * right;
+        const float envelope = std::max(std::abs(static_cast<float>(left)),
+                                        std::abs(static_cast<float>(right)));
+        const float activity = peakEnvelope > 1.0e-9f
+            ? std::clamp(envelope / (peakEnvelope * 0.5f), 0.0f, 1.0f) : 0.0f;
+        // Direction cues should be dominated by the recognized transient, not
+        // by quiet ambience in the rest of the localization window.
+        const double weight = 0.08 + 0.92 * activity * activity;
+        leftEnergy += weight * left * left;
+        rightEnergy += weight * right * right;
     }
     output.rms = static_cast<float>(std::sqrt((leftEnergy + rightEnergy) /
                                               std::max<size_t>(1, frameCount * 2)));
@@ -240,6 +253,7 @@ bool StereoDirectionEstimator::ExtractFeatures(
     int bestLag = 0;
     const int maximumLag = static_cast<int>(
         std::min<size_t>(m_config.maximumLagSamples, frameCount / 4));
+    std::vector<float> lagCorrelations(static_cast<size_t>(maximumLag * 2 + 1), -1.0f);
     for (int lag = -maximumLag; lag <= maximumLag; ++lag) {
         double numerator = 0.0;
         double laggedLeftEnergy = 0.0;
@@ -250,18 +264,34 @@ bool StereoDirectionEstimator::ExtractFeatures(
         for (size_t frame = 0; frame < count; ++frame) {
             const double left = interleaved[(leftStart + frame) * 2];
             const double right = interleaved[(rightStart + frame) * 2 + 1];
-            numerator += left * right;
-            laggedLeftEnergy += left * left;
-            laggedRightEnergy += right * right;
+            const float envelope = std::max(std::abs(static_cast<float>(left)),
+                                            std::abs(static_cast<float>(right)));
+            const float activity = peakEnvelope > 1.0e-9f
+                ? std::clamp(envelope / (peakEnvelope * 0.5f), 0.0f, 1.0f) : 0.0f;
+            const double weight = 0.08 + 0.92 * activity * activity;
+            numerator += weight * left * right;
+            laggedLeftEnergy += weight * left * left;
+            laggedRightEnergy += weight * right * right;
         }
         const float correlation = static_cast<float>(
             numerator / std::sqrt(std::max(1.0e-18, laggedLeftEnergy * laggedRightEnergy)));
+        lagCorrelations[static_cast<size_t>(lag + maximumLag)] = correlation;
         if (correlation > bestCorrelation) {
             bestCorrelation = correlation;
             bestLag = lag;
         }
     }
-    output.itdSamples = static_cast<float>(-bestLag);
+    float refinedLag = static_cast<float>(bestLag);
+    if (bestLag > -maximumLag && bestLag < maximumLag) {
+        const float previous = lagCorrelations[static_cast<size_t>(bestLag - 1 + maximumLag)];
+        const float center = lagCorrelations[static_cast<size_t>(bestLag + maximumLag)];
+        const float next = lagCorrelations[static_cast<size_t>(bestLag + 1 + maximumLag)];
+        const float curvature = previous - 2.0f * center + next;
+        if (std::abs(curvature) > 1.0e-6f) {
+            refinedLag += std::clamp(0.5f * (previous - next) / curvature, -0.5f, 0.5f);
+        }
+    }
+    output.itdSamples = -refinedLag;
     output.correlationPeak = std::clamp(bestCorrelation, -1.0f, 1.0f);
 
     STFTProcessor processor({m_config.fftSize, m_config.hopSize, m_config.sampleRate});
@@ -385,12 +415,42 @@ DirectionResult StereoDirectionEstimator::EstimateFeatures(
 
     const float isolation = std::clamp(profile.leftRightIsolationPercent / 100.0f, 0.0f, 1.0f);
     const float isolationCompensation = 1.0f + 0.65f * isolation;
-    const float levelEvidence = std::clamp(
-        -features.broadbandIldDb / (12.0f * isolationCompensation), -1.0f, 1.0f);
-    const float timeEvidence = std::clamp(
-        features.itdSamples / static_cast<float>(m_config.maximumLagSamples) * 2.2f,
+
+    // Pool the useful mid/high-band ILD using coherence as reliability.  This
+    // is substantially less sensitive to bass and unrelated broadband energy
+    // than applying one fixed gain formula to the whole event.
+    float bandIld = 0.0f;
+    float bandWeight = 0.0f;
+    for (size_t band = 1; band + 1 < StereoDirectionFeatures::kBandCount; ++band) {
+        const float weight = 0.1f + features.bandCoherence[band] *
+                                      features.bandCoherence[band];
+        bandIld += weight * std::clamp(features.bandIldDb[band], -24.0f, 24.0f);
+        bandWeight += weight;
+    }
+    if (bandWeight > 0.0f) bandIld /= bandWeight;
+    const float effectiveIld = 0.42f * features.broadbandIldDb + 0.58f * bandIld;
+    const float levelEvidence = std::tanh(
+        -effectiveIld / (8.5f * isolationCompensation));
+    const float timeEvidence = std::tanh(
+        features.itdSamples /
+        (0.72f * static_cast<float>(m_config.maximumLagSamples)));
+    const float levelReliability = 0.25f + 0.75f * std::clamp(
+        std::abs(effectiveIld) / 8.0f, 0.0f, 1.0f);
+    const float timeReliability = std::clamp(
+        (features.correlationPeak - 0.08f) / 0.82f, 0.0f, 1.0f);
+    float levelWeight = 0.56f * levelReliability;
+    float timeWeight = 0.44f * timeReliability;
+    // Conflicting cues are common with reflections. Prefer the cue with the
+    // clearer evidence instead of averaging them into a confidently wrong
+    // center bearing.
+    if (levelEvidence * timeEvidence < 0.0f) {
+        if (levelWeight > timeWeight) timeWeight *= 0.35f;
+        else levelWeight *= 0.35f;
+    }
+    const float side = std::clamp(
+        (levelWeight * levelEvidence + timeWeight * timeEvidence) /
+            std::max(0.001f, levelWeight + timeWeight),
         -1.0f, 1.0f);
-    const float side = std::clamp(0.58f * levelEvidence + 0.42f * timeEvidence, -1.0f, 1.0f);
     float frontAngle = std::asin(side) * 180.0f / kPi;
     frontAngle = WrapDirectionDegrees(frontAngle);
     const float signedFront = frontAngle > 180.0f ? frontAngle - 360.0f : frontAngle;
@@ -428,7 +488,22 @@ DirectionResult StereoDirectionEstimator::EstimateFeatures(
         result.probabilities.begin(), result.probabilities.end());
     const size_t primaryIndex = static_cast<size_t>(
         std::distance(result.probabilities.begin(), primaryIterator));
-    result.primaryAngleDegrees = static_cast<float>(primaryIndex) * 15.0f;
+    const size_t previousIndex = (primaryIndex + result.probabilities.size() - 1) %
+        result.probabilities.size();
+    const size_t nextIndex = (primaryIndex + 1) % result.probabilities.size();
+    const float previousProbability = result.probabilities[previousIndex];
+    const float centerProbability = result.probabilities[primaryIndex];
+    const float nextProbability = result.probabilities[nextIndex];
+    const float peakCurvature = previousProbability - 2.0f * centerProbability +
+                                nextProbability;
+    float binOffset = 0.0f;
+    if (std::abs(peakCurvature) > 1.0e-7f) {
+        binOffset = std::clamp(
+            0.5f * (previousProbability - nextProbability) / peakCurvature,
+            -0.5f, 0.5f);
+    }
+    result.primaryAngleDegrees = WrapDirectionDegrees(
+        (static_cast<float>(primaryIndex) + binOffset) * 15.0f);
 
     size_t secondaryIndex = primaryIndex;
     float secondaryProbability = 0.0f;

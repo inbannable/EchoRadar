@@ -81,8 +81,8 @@ threshold, spacing, onset-offset, scene, self-suppression, and pulse-width chang
 on the next audio block. The live diagnostics panel also shows the current
 scene-activity sound-level score, capture RMS/peak in dBFS, and raw gunshot/footstep
 onset scores before peak/event gating. Use `--no-overlay` only for headless
-capture/recognition. Direction defaults to footsteps only; gunshot localization
-can be enabled separately. The HUD defaults to CS2-foreground-only and expects
+capture/recognition. Direction defaults to both footsteps and gunshots; either
+class can be disabled separately. The HUD defaults to CS2-foreground-only and expects
 Fullscreen Windowed/Borderless mode. Press `Ctrl+Alt+O` to hide or restore it.
 
 Direction and overlay settings are persisted in

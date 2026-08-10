@@ -125,7 +125,7 @@ bool AppSettingsFile::Load(const std::filesystem::path& path,
     loaded.localization.localizeFootsteps = detail::GetBoolVal(
         values, "localize_footsteps", true);
     loaded.localization.localizeGunshots = detail::GetBoolVal(
-        values, "localize_gunshots", false);
+        values, "localize_gunshots", true);
     loaded.localization.sampleWindowMs = static_cast<uint32_t>(detail::GetU64(
         values, "localization_sample_ms", 240));
     loaded.localization.preOnsetMs = static_cast<uint32_t>(detail::GetU64(

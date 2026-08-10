@@ -155,12 +155,20 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         platform = static_cast<HudOverlayRenderer::PlatformImpl*>(create->lpCreateParams);
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(platform));
     }
+    // This window is display-only.  Handle pointer messages before ImGui so its
+    // Win32 backend never installs an arrow cursor or captures/activates the HUD.
+    // In borderless fullscreen the game can therefore keep its cursor hidden and
+    // receives clicks exactly as if the HUD were not present.
+    switch (message) {
+    case WM_NCHITTEST: return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+    case WM_SETCURSOR: return TRUE;
+    default: break;
+    }
     if (platform && platform->imguiContext) ImGui::SetCurrentContext(platform->imguiContext);
     if (ImGui::GetCurrentContext() &&
         ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) return true;
     switch (message) {
-    case WM_NCHITTEST: return HTTRANSPARENT;
-    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
     case WM_SIZE:
         if (platform && platform->device && wParam != SIZE_MINIMIZED) {
             CleanupRenderTarget(*platform);
@@ -241,7 +249,9 @@ bool HudOverlayRenderer::Initialise() {
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = HudWindowProc;
     windowClass.hInstance = m_platform->instance;
-    windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    // A display-only overlay must not own a cursor.  The underlying game owns
+    // cursor visibility and shape, including its hidden in-game state.
+    windowClass.hCursor = nullptr;
     windowClass.lpszClassName = kHudWindowClassName;
     if (RegisterClassExW(&windowClass)) m_platform->classRegistered = true;
     else if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
@@ -262,6 +272,7 @@ bool HudOverlayRenderer::Initialise() {
     ImGui::SetCurrentContext(m_platform->imguiContext);
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     ImGui_ImplWin32_Init(m_platform->window);
     ImGui_ImplDX11_Init(m_platform->device, m_platform->deviceContext);
     m_platform->imguiInitialized = true;
@@ -357,20 +368,27 @@ void HudOverlayRenderer::Render() {
         io.DisplaySize.y * 0.5f + settings.overlay.offsetY,
     };
     for (const Marker& marker : markers) {
-        if (marker.direction.status != DirectionStatus::Estimated) continue;
+        if (marker.direction.status != DirectionStatus::Estimated &&
+            marker.direction.status != DirectionStatus::LowConfidence) continue;
         const float lifetime = marker.event.soundClass == SoundClass::Gunshot
             ? settings.overlay.gunshotLifetimeSeconds
             : settings.overlay.footstepLifetimeSeconds;
         const float age = std::chrono::duration<float>(now - marker.created).count();
         const float fade = std::clamp(1.0f - age / std::max(0.1f, lifetime), 0.0f, 1.0f);
-        const float alpha = std::clamp(settings.overlay.opacity * fade *
-                                       marker.direction.confidence, 0.0f, 1.0f);
+        // Keep uncertain but usable estimates visible instead of silently
+        // dropping recognizer events.  Their lower opacity still communicates
+        // that the bearing should be treated cautiously.
+        const float visibleConfidence = marker.direction.status == DirectionStatus::Estimated
+            ? std::max(0.25f, marker.direction.confidence)
+            : std::max(0.16f, marker.direction.confidence * 0.65f);
+        const float alpha = std::clamp(
+            settings.overlay.opacity * fade * visibleConfidence, 0.0f, 1.0f);
         const ImVec4 color = marker.event.soundClass == SoundClass::Gunshot
             ? ImVec4(1.0f, 0.30f, 0.22f, alpha)
             : ImVec4(0.20f, 0.82f, 1.0f, alpha);
         DrawArc(drawList, center, settings.overlay.radiusPixels,
                 marker.direction.primaryAngleDegrees,
-                std::clamp(marker.direction.uncertaintyDegrees, 8.0f, 80.0f),
+                std::clamp(marker.direction.uncertaintyDegrees, 6.0f, 35.0f),
                 ImGui::ColorConvertFloat4ToU32(color), settings.overlay.thicknessPixels);
         if (settings.localization.showSecondaryDirection &&
             marker.direction.secondaryAngleDegrees) {
@@ -378,7 +396,7 @@ void HudOverlayRenderer::Render() {
             secondary.w *= 0.65f;
             DrawArc(drawList, center, settings.overlay.radiusPixels,
                     *marker.direction.secondaryAngleDegrees,
-                    std::clamp(marker.direction.uncertaintyDegrees, 8.0f, 80.0f),
+                    std::clamp(marker.direction.uncertaintyDegrees, 6.0f, 35.0f),
                     ImGui::ColorConvertFloat4ToU32(secondary),
                     settings.overlay.thicknessPixels * 0.75f);
         }

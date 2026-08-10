@@ -40,6 +40,8 @@ TEST(AppSettings, RoundTripPreservesAudioLocalizationAndOverlaySettings) {
 
 TEST(AppSettings, ClampsUnsafeOrIncompatibleValues) {
     AppSettings settings;
+    EXPECT_TRUE(settings.localization.localizeFootsteps);
+    EXPECT_TRUE(settings.localization.localizeGunshots);
     settings.localization.sampleWindowMs = 1;
     settings.localization.preOnsetMs = 900;
     settings.localization.minimumConfidence = -2.0f;

@@ -77,7 +77,7 @@ struct AudioProfile {
 
 struct LocalizationTuning {
     bool localizeFootsteps{true};
-    bool localizeGunshots{false};
+    bool localizeGunshots{true};
     uint32_t sampleWindowMs{240};
     uint32_t preOnsetMs{40};
     float minimumConfidence{0.35f};

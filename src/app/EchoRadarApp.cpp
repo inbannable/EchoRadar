@@ -215,7 +215,8 @@ void EchoRadarApp::ProcessPendingLocalizations() {
         }
 
         if (m_overlay) m_overlay->PushLocalizedEvent(pending.event, direction);
-        if (m_hud && direction.status == DirectionStatus::Estimated) {
+        if (m_hud && (direction.status == DirectionStatus::Estimated ||
+                      direction.status == DirectionStatus::LowConfidence)) {
             m_hud->PushEvent(pending.event, direction);
         }
         LogLocalizedEvent(pending.event, direction);
