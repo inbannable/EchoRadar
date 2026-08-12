@@ -162,11 +162,19 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     switch (message) {
     case WM_NCHITTEST: return HTTRANSPARENT;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
-    case WM_SETCURSOR: return TRUE;
+    case WM_SETCURSOR:
+        SetCursor(nullptr);
+        return TRUE;
     default: break;
     }
     if (platform && platform->imguiContext) ImGui::SetCurrentContext(platform->imguiContext);
-    if (ImGui::GetCurrentContext() &&
+    const bool isMouseMessage =
+        (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
+        (message >= WM_NCMOUSEMOVE && message <= WM_NCXBUTTONDBLCLK) ||
+        message == WM_MOUSEHOVER || message == WM_MOUSELEAVE ||
+        message == WM_NCMOUSEHOVER || message == WM_NCMOUSELEAVE ||
+        message == WM_CAPTURECHANGED;
+    if (!isMouseMessage && ImGui::GetCurrentContext() &&
         ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) return true;
     switch (message) {
     case WM_SIZE:
@@ -257,9 +265,15 @@ bool HudOverlayRenderer::Initialise() {
     else if (GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
 
     const RECT rectangle = WindowScreenRect(Cs2Window());
+    const DWORD exStyle =
+        WS_EX_TOPMOST |
+        WS_EX_LAYERED |
+        WS_EX_TRANSPARENT |
+        WS_EX_TOOLWINDOW |
+        WS_EX_NOACTIVATE |
+        WS_EX_NOREDIRECTIONBITMAP;
     m_platform->window = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW |
-            WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
+        exStyle,
         kHudWindowClassName, L"EchoRadar Direction HUD", WS_POPUP,
         rectangle.left, rectangle.top, rectangle.right - rectangle.left,
         rectangle.bottom - rectangle.top, nullptr, nullptr,
