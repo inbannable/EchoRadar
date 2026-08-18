@@ -168,6 +168,14 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         return TRUE;
     default: break;
     }
+<<<<<<< HEAD
+    if (platform && platform->imguiContext) {
+        ImGui::SetCurrentContext(platform->imguiContext);
+        if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
+            return true;
+        }
+    }
+=======
     if (platform && platform->imguiContext) ImGui::SetCurrentContext(platform->imguiContext);
     const bool isMouseMessage =
         (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
@@ -177,6 +185,7 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         message == WM_CAPTURECHANGED;
     if (!isMouseMessage && ImGui::GetCurrentContext() &&
         ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) return true;
+>>>>>>> fd6579ebd09daa30de54739f32935b96cc1036fd
     switch (message) {
     case WM_SIZE:
         if (platform && platform->device && wParam != SIZE_MINIMIZED) {
