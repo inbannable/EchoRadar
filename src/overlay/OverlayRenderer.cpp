@@ -203,7 +203,7 @@ struct OverlayRenderer::PlatformImpl {};
 
 OverlayRenderer::OverlayRenderer() : OverlayRenderer(Config{}) {}
 
-OverlayRenderer::OverlayRenderer(Config cfg) : m_cfg(std::move(cfg)) {}
+OverlayRenderer::OverlayRenderer(Config cfg) : m_config(std::move(cfg)) {}
 
 OverlayRenderer::~OverlayRenderer() {
     Shutdown();
@@ -229,7 +229,7 @@ bool OverlayRenderer::Initialise() {
         return false;
     }
 
-    RECT windowRect{0, 0, m_cfg.window_width, m_cfg.window_height};
+    RECT windowRect{0, 0, m_config.windowWidth, m_config.windowHeight};
     AdjustWindowRectEx(&windowRect, WS_OVERLAPPEDWINDOW, FALSE, 0);
     const int width = windowRect.right - windowRect.left;
     const int height = windowRect.bottom - windowRect.top;
@@ -238,7 +238,7 @@ bool OverlayRenderer::Initialise() {
     m_platform->window = CreateWindowExW(
         WS_EX_APPWINDOW,
         kWindowClassName,
-        L"EchoRadar - V4 Event Chart",
+        L"EchoRadar - Control",
         WS_OVERLAPPEDWINDOW,
         x, y, width, height,
         nullptr,
@@ -309,39 +309,29 @@ void OverlayRenderer::Shutdown() {
     m_running = false;
 }
 
-void OverlayRenderer::PushFootstep(const FootstepEvent& ev,
-                                    const DirectionEstimate& dir) {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_markers.push_back({dir, /*is_gunshot=*/false, /*ttl=*/2.0f});
-    (void)ev;
-}
-
-void OverlayRenderer::PushGunshot(const GunshotEvent& ev,
-                                   const DirectionEstimate& dir) {
-    std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_markers.push_back({dir, /*is_gunshot=*/true, /*ttl=*/1.0f});
-    (void)ev;
-}
-
-void OverlayRenderer::PushV4Event(const V4SoundEvent& event) {
+void OverlayRenderer::PushRecognitionEvent(const SoundEvent& event) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     if (event.streamGeneration != m_streamGeneration) {
-        m_v4Events.clear();
+        m_recognitionEvents.clear();
         m_streamGeneration = event.streamGeneration;
     }
-    m_v4Events.push_back(event);
+    m_recognitionEvents.push_back(event);
     constexpr size_t kMaximumChartEvents = 1024;
-    while (m_v4Events.size() > kMaximumChartEvents) m_v4Events.pop_front();
+    while (m_recognitionEvents.size() > kMaximumChartEvents) {
+        m_recognitionEvents.pop_front();
+    }
 }
 
-void OverlayRenderer::PushLocalizedEvent(const V4SoundEvent& event,
-                                         const DirectionResult& direction,
-                                         std::filesystem::path clipPath) {
+void OverlayRenderer::PushDirectionScene(
+    std::vector<DirectionSceneEvent> events,
+    const DirectionSceneResult& direction,
+    std::filesystem::path clipPath) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_localizedEvents.push_back({event, direction, std::move(clipPath)});
-    constexpr size_t kMaximumLocalizedEvents = 256;
-    while (m_localizedEvents.size() > kMaximumLocalizedEvents) {
-        m_localizedEvents.pop_front();
+    m_directionScenes.push_back(
+        {std::move(events), direction, std::move(clipPath)});
+    constexpr size_t kMaximumDirectionScenes = 256;
+    while (m_directionScenes.size() > kMaximumDirectionScenes) {
+        m_directionScenes.pop_front();
     }
 }
 
@@ -349,14 +339,14 @@ void OverlayRenderer::PushAudioClock(uint64_t sample, uint64_t streamGeneration,
                                       bool discontinuity) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
     if (discontinuity || streamGeneration != m_streamGeneration) {
-        m_v4Events.clear();
-        m_localizedEvents.clear();
+        m_recognitionEvents.clear();
+        m_directionScenes.clear();
         m_streamGeneration = streamGeneration;
         m_currentSample = 0;
         m_audioLevels = {};
-        m_v4Scores = {};
+        m_recognitionScores = {};
         m_sceneActivity = 0.0f;
-        m_haveV4Scores = false;
+        m_haveRecognitionScores = false;
     }
     m_currentSample = std::max(m_currentSample, sample);
 }
@@ -366,12 +356,12 @@ void OverlayRenderer::PushAudioLevels(const AudioLevels& levels) {
     m_audioLevels = levels;
 }
 
-void OverlayRenderer::PushV4Scores(const V4ModelOutput& output, float sceneActivity,
+void OverlayRenderer::PushRecognitionScores(const RecognitionModelOutput& output, float sceneActivity,
                                     bool hasOutput) {
     std::lock_guard<std::mutex> lock(m_dataMutex);
-    m_v4Scores = output;
+    m_recognitionScores = output;
     m_sceneActivity = std::clamp(sceneActivity, 0.0f, 1.0f);
-    m_haveV4Scores = hasOutput;
+    m_haveRecognitionScores = hasOutput;
 }
 
 void OverlayRenderer::Render() {
@@ -390,8 +380,8 @@ void OverlayRenderer::Render() {
         }
     }
 
-    const AppSettings appSettings = m_cfg.runtime_settings
-        ? m_cfg.runtime_settings->Snapshot() : AppSettings{};
+    const AppSettings appSettings = m_config.runtimeSettings
+        ? m_config.runtimeSettings->Snapshot() : AppSettings{};
     ApplyUiScale(appSettings.uiScale);
 
     ImGui_ImplDX11_NewFrame();
@@ -424,24 +414,24 @@ void OverlayRenderer::ApplyUiScale(float scale) {
 }
 
 void OverlayRenderer::DrawUi() {
-    std::deque<V4SoundEvent> events;
-    std::deque<LocalizedRecord> localizedEvents;
+    std::deque<SoundEvent> events;
+    std::deque<DirectionSceneRecord> directionScenes;
     uint64_t currentSample = 0;
     uint64_t streamGeneration = 0;
     AudioLevels audioLevels;
-    V4ModelOutput v4Scores;
+    RecognitionModelOutput recognitionScores;
     float sceneActivity = 0.0f;
-    bool haveV4Scores = false;
+    bool haveRecognitionScores = false;
     {
         std::lock_guard<std::mutex> lock(m_dataMutex);
-        events = m_v4Events;
-        localizedEvents = m_localizedEvents;
+        events = m_recognitionEvents;
+        directionScenes = m_directionScenes;
         currentSample = m_currentSample;
         streamGeneration = m_streamGeneration;
         audioLevels = m_audioLevels;
-        v4Scores = m_v4Scores;
+        recognitionScores = m_recognitionScores;
         sceneActivity = m_sceneActivity;
-        haveV4Scores = m_haveV4Scores;
+        haveRecognitionScores = m_haveRecognitionScores;
     }
 
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -454,7 +444,7 @@ void OverlayRenderer::DrawUi() {
 
     ImGui::TextColored(ImVec4(0.36f, 0.82f, 1.0f, 1.0f), "ECHO RADAR");
     ImGui::SameLine();
-    ImGui::TextDisabled("V4 EVENT MONITOR");
+    ImGui::TextDisabled("EVENT MONITOR");
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 92.0f);
     if (m_running) {
         ImGui::TextColored(ImVec4(0.30f, 0.92f, 0.52f, 1.0f), "● LIVE");
@@ -463,28 +453,28 @@ void OverlayRenderer::DrawUi() {
     }
     ImGui::Separator();
 
-    const char* modelText = m_cfg.model_version.empty()
-        ? "V4 model unavailable" : m_cfg.model_version.c_str();
+    const char* modelText = m_config.modelVersion.empty()
+        ? "Recognition model unavailable" : m_config.modelVersion.c_str();
     ImGui::Text("Model: %s", modelText);
     ImGui::SameLine();
     ImGui::TextDisabled("| stream %llu | audio %.2fs | %zu events",
                         static_cast<unsigned long long>(streamGeneration),
-                        m_cfg.sample_rate == 0
+                        m_config.sampleRate == 0
                             ? 0.0
-                            : static_cast<double>(currentSample) / m_cfg.sample_rate,
+                            : static_cast<double>(currentSample) / m_config.sampleRate,
                         events.size());
-    if (!m_cfg.recognition_error.empty()) {
+    if (!m_config.recognitionError.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.58f, 0.32f, 1.0f),
-                           "Recognition paused: %s", m_cfg.recognition_error.c_str());
+                           "Recognition paused: %s", m_config.recognitionError.c_str());
     }
 
     if (ImGui::BeginTabBar("EchoRadarPages")) {
         if (ImGui::BeginTabItem("Live")) {
-            DrawLiveDiagnostics(audioLevels, v4Scores, sceneActivity, haveV4Scores);
+            DrawLiveDiagnostics(audioLevels, recognitionScores, sceneActivity, haveRecognitionScores);
             if (ImGui::Button("Clear chart")) {
                 std::lock_guard<std::mutex> lock(m_dataMutex);
-                m_v4Events.clear();
-                m_localizedEvents.clear();
+                m_recognitionEvents.clear();
+                m_directionScenes.clear();
             }
             ImGui::SameLine();
             ImGui::SetNextItemWidth(180.0f);
@@ -502,7 +492,7 @@ void OverlayRenderer::DrawUi() {
                 ImGui::TableNextColumn();
                 DrawRecentEvents(events, streamGeneration);
                 ImGui::TableNextColumn();
-                DrawDirectionPage(localizedEvents);
+                DrawDirectionPage(directionScenes);
                 ImGui::EndTable();
             }
             ImGui::EndTabItem();
@@ -513,11 +503,7 @@ void OverlayRenderer::DrawUi() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Direction")) {
-            DrawDirectionPage(localizedEvents);
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Calibration")) {
-            DrawCalibrationPage();
+            DrawDirectionPage(directionScenes);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Overlay")) {
@@ -534,7 +520,7 @@ void OverlayRenderer::DrawUi() {
 }
 
 void OverlayRenderer::DrawLiveDiagnostics(const AudioLevels& levels,
-                                           const V4ModelOutput& scores,
+                                           const RecognitionModelOutput& scores,
                                            float sceneActivity, bool haveScores) {
     const auto dbFs = [](float amplitude) {
         if (!std::isfinite(amplitude) || amplitude <= 1.0e-6f) return -120.0f;
@@ -544,8 +530,8 @@ void OverlayRenderer::DrawLiveDiagnostics(const AudioLevels& levels,
     const float rightRmsDb = dbFs(levels.rightRms);
     const float leftPeakDb = dbFs(levels.leftPeak);
     const float rightPeakDb = dbFs(levels.rightPeak);
-    const float cutoff = m_cfg.v4_tuning
-        ? m_cfg.v4_tuning->Snapshot().sceneActivityCutoff : 0.5f;
+    const float cutoff = m_config.runtimeTuning
+        ? m_config.runtimeTuning->Snapshot().sceneActivityCutoff : 0.5f;
 
     if (ImGui::BeginTable("LiveDiagnostics", 2,
                           ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV,
@@ -565,7 +551,7 @@ void OverlayRenderer::DrawLiveDiagnostics(const AudioLevels& levels,
             ImGui::Text("Scene: %s  |  cutoff %.3f",
                         sceneActivity >= cutoff ? "BUSY" : "QUIET", cutoff);
         } else {
-            ImGui::TextDisabled("Waiting for V4 feature/inference output...");
+            ImGui::TextDisabled("Waiting for recognition feature/inference output...");
         }
         ImGui::Text("RMS   L %6.1f dBFS   R %6.1f dBFS", leftRmsDb, rightRmsDb);
         ImGui::Text("Peak  L %6.1f dBFS   R %6.1f dBFS", leftPeakDb, rightPeakDb);
@@ -587,13 +573,13 @@ void OverlayRenderer::DrawLiveDiagnostics(const AudioLevels& levels,
             ImGui::ProgressBar(footstep, ImVec2(-FLT_MIN, 0.0f), footstepOverlay);
             ImGui::TextDisabled("Scores are live model output before peak/event gating.");
         } else {
-            ImGui::TextDisabled("V4 model scores are unavailable.");
+            ImGui::TextDisabled("Recognition model scores are unavailable.");
         }
         ImGui::EndTable();
     }
 }
 
-void OverlayRenderer::DrawEventTimeline(const std::deque<V4SoundEvent>& events,
+void OverlayRenderer::DrawEventTimeline(const std::deque<SoundEvent>& events,
                                          uint64_t currentSample,
                                          uint64_t streamGeneration) {
     const float height = 260.0f;
@@ -610,7 +596,7 @@ void OverlayRenderer::DrawEventTimeline(const std::deque<V4SoundEvent>& events,
                             ImVec2(origin.x + size.x, origin.y + size.y),
                             panelColor, 7.0f);
 
-    const double sampleRate = m_cfg.sample_rate == 0 ? 48000.0 : m_cfg.sample_rate;
+    const double sampleRate = m_config.sampleRate == 0 ? 48000.0 : m_config.sampleRate;
     const double nowSeconds = static_cast<double>(currentSample) / sampleRate;
     const double startSeconds = std::max(0.0, nowSeconds - m_chartWindowSeconds);
     const float left = origin.x + 92.0f;
@@ -663,11 +649,11 @@ void OverlayRenderer::DrawEventTimeline(const std::deque<V4SoundEvent>& events,
     if (events.empty()) {
         drawList->AddText(ImVec2(left + 18.0f, top + laneHeight - 18.0f),
                           IM_COL32(129, 148, 174, 255),
-                          "Waiting for V4 events...");
+                          "Waiting for recognition events...");
     }
 }
 
-void OverlayRenderer::DrawRecentEvents(const std::deque<V4SoundEvent>& events,
+void OverlayRenderer::DrawRecentEvents(const std::deque<SoundEvent>& events,
                                         uint64_t streamGeneration) {
     if (ImGui::BeginChild("RecentEvents", ImVec2(0.0f, 210.0f), true)) {
         if (ImGui::BeginTable("EventTable", 6,
@@ -683,9 +669,9 @@ void OverlayRenderer::DrawRecentEvents(const std::deque<V4SoundEvent>& events,
             ImGui::TableSetupColumn("Latency");
             ImGui::TableHeadersRow();
             size_t shown = 0;
-            const double sampleRate = m_cfg.sample_rate == 0 ? 48000.0 : m_cfg.sample_rate;
+            const double sampleRate = m_config.sampleRate == 0 ? 48000.0 : m_config.sampleRate;
             for (auto it = events.rbegin(); it != events.rend() && shown < 16; ++it) {
-                const V4SoundEvent& event = *it;
+                const SoundEvent& event = *it;
                 if (event.streamGeneration != streamGeneration) continue;
                 ++shown;
                 ImGui::TableNextRow();
@@ -721,20 +707,20 @@ void OverlayRenderer::DrawRecentEvents(const std::deque<V4SoundEvent>& events,
 }
 
 void OverlayRenderer::DrawTuneTable() {
-    if (!m_cfg.v4_tuning) {
-        ImGui::BeginChild("V4TuningUnavailable", ImVec2(0.0f, 210.0f), true);
-        ImGui::TextDisabled("No V4 runtime policy is available.");
+    if (!m_config.runtimeTuning) {
+        ImGui::BeginChild("RecognitionTuningUnavailable", ImVec2(0.0f, 210.0f), true);
+        ImGui::TextDisabled("No recognition runtime policy is available.");
         ImGui::EndChild();
         return;
     }
 
-    if (ImGui::Button("Reset to package defaults")) m_cfg.v4_tuning->Reset();
+    if (ImGui::Button("Reset to package defaults")) m_config.runtimeTuning->Reset();
     ImGui::SameLine();
     ImGui::TextDisabled("changes apply live on the next audio block");
 
-    V4RuntimeTuning updated = m_cfg.v4_tuning->Snapshot();
+    RecognitionRuntimeTuning updated = m_config.runtimeTuning->Snapshot();
     bool changed = false;
-    if (ImGui::BeginTable("V4TuneTable", 4,
+    if (ImGui::BeginTable("RecognitionTuneTable", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
                               ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Setting");
@@ -753,7 +739,7 @@ void OverlayRenderer::DrawTuneTable() {
                 ImGui::TableNextColumn();
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 char id[48]{};
-                std::snprintf(id, sizeof(id), "##v4_%s_%zu", suffix, index);
+                std::snprintf(id, sizeof(id), "##recognition_%s_%zu", suffix, index);
                 changed |= ImGui::SliderFloat(id, &values[index], 0.01f, 1.0f, "%.3f");
             }
             ImGui::TableNextColumn();
@@ -777,7 +763,7 @@ void OverlayRenderer::DrawTuneTable() {
                 ImGui::TableNextColumn();
                 ImGui::SetNextItemWidth(-FLT_MIN);
                 char id[48]{};
-                std::snprintf(id, sizeof(id), "##v4_%s_%zu", suffix, index);
+                std::snprintf(id, sizeof(id), "##recognition_%s_%zu", suffix, index);
                 if (ImGui::SliderInt(id, &value, minimum, maximum, "%d ms")) {
                     values[index] = static_cast<uint32_t>(value);
                     rowChanged = true;
@@ -797,7 +783,7 @@ void OverlayRenderer::DrawTuneTable() {
                 48000u);
         }
         const bool onsetOffsetChanged = millisecondsRow(
-            "Onset offset", "offset", onsetOffsetMs, 0, 50, "calibration");
+            "Onset offset", "offset", onsetOffsetMs, 0, 50, "timing correction");
         if (onsetOffsetChanged) {
             for (size_t index = 0; index < onsetOffsetMs.size(); ++index) {
                 updated.onsetOffsetSamples[index] = static_cast<uint32_t>(
@@ -819,9 +805,9 @@ void OverlayRenderer::DrawTuneTable() {
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", effect);
         };
-        sharedFloatRow("Scene activity cutoff", "##v4_scene", updated.sceneActivityCutoff,
+        sharedFloatRow("Scene activity cutoff", "##recognition_scene", updated.sceneActivityCutoff,
                        0.01f, 0.99f, "quiet / busy split");
-        sharedFloatRow("Self suppression", "##v4_self", updated.selfSuppressionThreshold,
+        sharedFloatRow("Self suppression", "##recognition_self", updated.selfSuppressionThreshold,
                        0.01f, 1.0f, "hide local audio");
 
         ImGui::TableNextRow();
@@ -830,7 +816,7 @@ void OverlayRenderer::DrawTuneTable() {
         ImGui::TableNextColumn();
         int pulseMs = static_cast<int>(updated.pulseMs);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::SliderInt("##v4_pulse", &pulseMs, 1, 500, "%d ms")) {
+        if (ImGui::SliderInt("##recognition_pulse", &pulseMs, 1, 500, "%d ms")) {
             updated.pulseMs = static_cast<uint32_t>(pulseMs);
             changed = true;
         }
@@ -841,207 +827,170 @@ void OverlayRenderer::DrawTuneTable() {
         ImGui::EndTable();
     }
 
-    if (changed) m_cfg.v4_tuning->Update(updated);
+    if (changed) m_config.runtimeTuning->Update(updated);
     ImGui::TextDisabled("Locked model shape: 1024 FFT / 240 hop / 64 mel / 128-frame context / %u-frame peak lookahead",
-                        m_cfg.peak_lookahead_frames);
+                        m_config.peakLookaheadFrames);
 }
 
-void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>& events) {
-    if (!m_cfg.runtime_settings) {
+void OverlayRenderer::DrawDirectionPage(
+    const std::deque<DirectionSceneRecord>& scenes) {
+    if (!m_config.runtimeSettings) {
         ImGui::TextDisabled("Direction settings are unavailable.");
         return;
     }
-    AppSettings settings = m_cfg.runtime_settings->Snapshot();
-    bool changed = false;
 
-    DirectionProfileSource activeSource = DirectionProfileSource::Synthetic;
-    if (m_cfg.calibration &&
-        m_cfg.calibration->ProfileSnapshot().Matches(settings.audioProfile)) {
-        activeSource = DirectionProfileSource::Calibrated;
+    AppSettings settings = m_config.runtimeSettings->Snapshot();
+    bool changed = false;
+    ImGui::Text("Direction model: %s",
+                m_config.directionModelVersion.empty()
+                    ? "unavailable"
+                    : m_config.directionModelVersion.c_str());
+    if (!m_config.directionError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.58f, 0.32f, 1.0f),
+                           "Direction paused: %s",
+                           m_config.directionError.c_str());
     }
-    ImGui::TextColored(activeSource == DirectionProfileSource::Calibrated
-                           ? ImVec4(0.30f, 0.92f, 0.52f, 1.0f)
-                           : ImVec4(1.0f, 0.72f, 0.32f, 1.0f),
-                       "Direction profile: %s",
-                       activeSource == DirectionProfileSource::Calibrated
-                           ? "CALIBRATED" : "SYNTHETIC / BASIC ACCURACY");
 
     if (ImGui::BeginTable("DirectionSettings", 2,
-                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
+                          ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Borders |
                               ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Setting");
-        ImGui::TableSetupColumn("Value");
+        ImGui::TableSetupColumn("Class");
+        ImGui::TableSetupColumn("Enabled");
         ImGui::TableHeadersRow();
-        const auto nextSetting = [](const char* label) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(label);
-            ImGui::TableNextColumn();
-            ImGui::SetNextItemWidth(-FLT_MIN);
-        };
-
-        nextSetting("Footstep direction");
-        changed |= ImGui::Checkbox("##localize_footsteps",
-                                   &settings.localization.localizeFootsteps);
-        nextSetting("Gunshot direction");
-        changed |= ImGui::Checkbox("##localize_gunshots",
-                                   &settings.localization.localizeGunshots);
-        nextSetting("Localization sample length");
-        int sampleMs = static_cast<int>(settings.localization.sampleWindowMs);
-        if (ImGui::SliderInt("##direction_window", &sampleMs, 100, 600, "%d ms")) {
-            settings.localization.sampleWindowMs = static_cast<uint32_t>(sampleMs);
-            changed = true;
-        }
-        nextSetting("Pre-onset audio");
-        int preMs = static_cast<int>(settings.localization.preOnsetMs);
-        if (ImGui::SliderInt("##direction_pre", &preMs, 0,
-                             std::max(0, sampleMs - 20), "%d ms")) {
-            settings.localization.preOnsetMs = static_cast<uint32_t>(preMs);
-            changed = true;
-        }
-        nextSetting("Footstep peak pre / post");
-        int footstepPeakWindow[2]{
-            static_cast<int>(settings.localization.footstepPeak.beforePeakMs),
-            static_cast<int>(settings.localization.footstepPeak.afterPeakMs)};
-        if (ImGui::SliderInt2("##footstep_peak_window", footstepPeakWindow,
-                              0, 240, "%d ms")) {
-            settings.localization.footstepPeak.beforePeakMs =
-                static_cast<uint32_t>(footstepPeakWindow[0]);
-            settings.localization.footstepPeak.afterPeakMs =
-                static_cast<uint32_t>(footstepPeakWindow[1]);
-            changed = true;
-        }
-        nextSetting("Footstep minimum peak SNR");
-        changed |= ImGui::SliderFloat("##footstep_peak_snr",
-                                      &settings.localization.footstepPeak.minimumPeakToNoiseDb,
-                                      0.0f, 24.0f, "%.1f dB");
-        nextSetting("Gunshot peak pre / post");
-        int gunshotPeakWindow[2]{
-            static_cast<int>(settings.localization.gunshotPeak.beforePeakMs),
-            static_cast<int>(settings.localization.gunshotPeak.afterPeakMs)};
-        if (ImGui::SliderInt2("##gunshot_peak_window", gunshotPeakWindow,
-                              0, 240, "%d ms")) {
-            settings.localization.gunshotPeak.beforePeakMs =
-                static_cast<uint32_t>(gunshotPeakWindow[0]);
-            settings.localization.gunshotPeak.afterPeakMs =
-                static_cast<uint32_t>(gunshotPeakWindow[1]);
-            changed = true;
-        }
-        nextSetting("Gunshot minimum peak SNR");
-        changed |= ImGui::SliderFloat("##gunshot_peak_snr",
-                                      &settings.localization.gunshotPeak.minimumPeakToNoiseDb,
-                                      0.0f, 24.0f, "%.1f dB");
-        nextSetting("Minimum confidence");
-        changed |= ImGui::SliderFloat("##direction_confidence",
-                                      &settings.localization.minimumConfidence,
-                                      0.05f, 0.95f, "%.2f");
-        nextSetting("Show secondary direction");
-        changed |= ImGui::Checkbox("##direction_secondary",
-                                   &settings.localization.showSecondaryDirection);
-        nextSetting("Secondary probability ratio");
-        changed |= ImGui::SliderFloat("##direction_secondary_ratio",
-                                      &settings.localization.secondaryRatio,
-                                      0.25f, 1.0f, "%.2f");
-
-        nextSetting("EQ profile");
-        const char* eqNames[]{"Natural", "Crisp", "Smooth"};
-        int eq = static_cast<int>(settings.audioProfile.eqProfile);
-        if (ImGui::Combo("##audio_eq", &eq, eqNames, 3)) {
-            settings.audioProfile.eqProfile = static_cast<HeadphoneEqProfile>(eq);
-            changed = true;
-        }
-        nextSetting("L/R isolation");
-        changed |= ImGui::SliderFloat("##audio_lr_isolation",
-                                      &settings.audioProfile.leftRightIsolationPercent,
-                                      0.0f, 100.0f, "%.0f%%");
-        nextSetting("Perspective correction");
-        changed |= ImGui::Checkbox("##audio_perspective",
-                                   &settings.audioProfile.perspectiveCorrection);
-        nextSetting("Display aspect ratio");
-        changed |= ImGui::SliderFloat("##audio_aspect",
-                                      &settings.audioProfile.displayAspectRatio,
-                                      1.0f, 3.6f, "%.3f");
-        nextSetting("Windows spatial processing");
-        const char* spatialNames[]{"Off", "On", "Unknown"};
-        int spatial = static_cast<int>(settings.audioProfile.spatialEnhancement);
-        if (ImGui::Combo("##audio_spatial", &spatial, spatialNames, 3)) {
-            settings.audioProfile.spatialEnhancement =
-                static_cast<SpatialEnhancementState>(spatial);
-            changed = true;
-        }
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Footsteps");
+        ImGui::TableNextColumn();
+        changed |= ImGui::Checkbox(
+            "##direction_footsteps",
+            &settings.direction.enableFootsteps);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("Gunshots");
+        ImGui::TableNextColumn();
+        changed |= ImGui::Checkbox(
+            "##direction_gunshots",
+            &settings.direction.enableGunshots);
         ImGui::EndTable();
     }
-    if (changed) m_cfg.runtime_settings->Update(settings, true, nullptr);
+    if (changed) {
+        m_config.runtimeSettings->Update(settings, true, nullptr);
+    }
 
     ImGui::Spacing();
-    if (!m_cfg.clip_directory.empty()) {
-        ImGui::TextDisabled("Event clips: %s", m_cfg.clip_directory.string().c_str());
-    } else {
-        ImGui::TextDisabled("Event clips are unavailable; the clip directory could not be created.");
-    }
     if (!m_playingClipPath.empty()) {
         if (ImGui::SmallButton("Stop playback")) StopClip();
         ImGui::SameLine();
-        ImGui::TextDisabled("Last played: %s", m_playingClipPath.filename().string().c_str());
+        ImGui::TextDisabled("Last played: %s",
+                            m_playingClipPath.filename().string().c_str());
     }
     if (!m_clipPlaybackError.empty()) {
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f),
-                           "Clip playback: %s", m_clipPlaybackError.c_str());
+                           "Clip playback: %s",
+                           m_clipPlaybackError.c_str());
     }
-    ImGui::TextUnformatted("Recent direction estimates");
-    if (ImGui::BeginTable("DirectionEvents", 10,
-                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-                              ImGuiTableFlags_ScrollY,
-                          ImVec2(0.0f, 230.0f))) {
-        ImGui::TableSetupColumn("Event");
-        ImGui::TableSetupColumn("Type");
-        ImGui::TableSetupColumn("Angle");
+
+    ImGui::TextUnformatted("Recent direction scenes");
+    if (ImGui::BeginTable(
+            "DirectionScenes", 9,
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
+                ImGuiTableFlags_ScrollY,
+            ImVec2(0.0f, 260.0f))) {
+        ImGui::TableSetupColumn("Scene");
+        ImGui::TableSetupColumn("Source");
+        ImGui::TableSetupColumn("Events");
+        ImGui::TableSetupColumn("Azimuth");
+        ImGui::TableSetupColumn("Elevation");
         ImGui::TableSetupColumn("Conf.");
-        ImGui::TableSetupColumn("Peak SNR");
-        ImGui::TableSetupColumn("GCC");
         ImGui::TableSetupColumn("Arc");
-        ImGui::TableSetupColumn("Profile");
         ImGui::TableSetupColumn("Status");
         ImGui::TableSetupColumn("Audio");
         ImGui::TableHeadersRow();
-        size_t shown = 0;
-        for (auto iterator = events.rbegin(); iterator != events.rend() && shown < 24;
-             ++iterator, ++shown) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%llu", static_cast<unsigned long long>(iterator->direction.eventId));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(EventShortName(iterator->event.soundClass));
-            ImGui::TableNextColumn();
-            ImGui::Text("%.0f deg", iterator->direction.primaryAngleDegrees);
-            ImGui::TableNextColumn();
-            ImGui::Text("%.2f", iterator->direction.confidence);
-            ImGui::TableNextColumn();
-            ImGui::Text("%.1f dB", iterator->direction.peakToNoiseDb);
-            ImGui::TableNextColumn();
-            ImGui::Text("%.2f", iterator->direction.gccQuality);
-            ImGui::TableNextColumn();
-            ImGui::Text("+/-%.0f", iterator->direction.uncertaintyDegrees);
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(ToString(iterator->direction.profileSource));
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted(ToString(iterator->direction.status));
-            ImGui::TableNextColumn();
-            if (iterator->clipPath.empty()) {
-                ImGui::TextDisabled("n/a");
-            } else {
-                const std::string buttonId = "Play##clip_" +
-                    std::to_string(iterator->direction.eventId);
-                if (ImGui::SmallButton(buttonId.c_str())) PlayClip(iterator->clipPath);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", iterator->clipPath.string().c_str());
+
+        size_t shownScenes = 0;
+        for (auto sceneIterator = scenes.rbegin();
+             sceneIterator != scenes.rend() && shownScenes < 24;
+             ++sceneIterator, ++shownScenes) {
+            const auto& record = *sceneIterator;
+            std::string eventSummary;
+            for (size_t index = 0; index < record.events.size(); ++index) {
+                if (index != 0) eventSummary += ", ";
+                eventSummary += std::to_string(record.events[index].eventId);
+                eventSummary += ':';
+                eventSummary += ToString(
+                    record.events[index].event.soundClass);
+            }
+
+            const uint32_t rows = std::max<uint32_t>(
+                1, std::min<uint32_t>(
+                    record.direction.sourceCount,
+                    static_cast<uint32_t>(
+                        DirectionSceneResult::kMaximumSources)));
+            for (uint32_t sourceIndex = 0;
+                 sourceIndex < rows; ++sourceIndex) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%llu",
+                            static_cast<unsigned long long>(
+                                record.direction.sceneId));
+                ImGui::TableNextColumn();
+                if (record.direction.sourceCount == 0) {
+                    ImGui::TextDisabled("-");
+                } else {
+                    ImGui::Text("%u/%u", sourceIndex + 1,
+                                record.direction.sourceCount);
+                }
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(eventSummary.c_str());
+                ImGui::TableNextColumn();
+                if (record.direction.sourceCount == 0) {
+                    ImGui::TextDisabled("-");
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("-");
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("-");
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("-");
+                } else {
+                    const auto& source =
+                        record.direction.sources[sourceIndex];
+                    ImGui::Text("%.0f deg", source.azimuthDegrees);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%+.0f deg", source.elevationDegrees);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.2f", source.confidence);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("+/-%.0f",
+                                source.uncertaintyDegrees);
+                }
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(
+                    ToString(record.direction.status));
+                ImGui::TableNextColumn();
+                if (sourceIndex != 0) {
+                    ImGui::TextDisabled("shared");
+                } else if (record.clipPath.empty()) {
+                    ImGui::TextDisabled("n/a");
+                } else {
+                    const std::string buttonId =
+                        "Play##scene_" +
+                        std::to_string(record.direction.sceneId);
+                    if (ImGui::SmallButton(buttonId.c_str())) {
+                        PlayClip(record.clipPath);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "%s", record.clipPath.string().c_str());
+                    }
                 }
             }
         }
-        if (shown == 0) {
+        if (shownScenes == 0) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextDisabled("Waiting for localized events...");
+            ImGui::TextDisabled(
+                "Waiting for direction scenes...");
         }
         ImGui::EndTable();
     }
@@ -1076,60 +1025,9 @@ void OverlayRenderer::StopClip() {
 
 #endif
 
-void OverlayRenderer::DrawCalibrationPage() {
-    if (!m_cfg.calibration || !m_cfg.runtime_settings) {
-        ImGui::TextDisabled("Calibration controls are unavailable.");
-        return;
-    }
-    const AppSettings settings = m_cfg.runtime_settings->Snapshot();
-    const CalibrationController::State state = m_cfg.calibration->Snapshot();
-    ImGui::TextWrapped("Use a private/practice session with one fixed remote sound source. "
-                       "Face the source at the displayed relative bearing, arm EchoRadar, "
-                       "then produce one footstep event.");
-    if (ImGui::Button("Start quick (24 samples)")) {
-        m_cfg.calibration->Begin(CalibrationController::Mode::Quick,
-                                 settings.audioProfile);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Start full (96 samples)")) {
-        m_cfg.calibration->Begin(CalibrationController::Mode::Full,
-                                 settings.audioProfile);
-    }
-    ImGui::Separator();
-    if (state.active || state.complete) {
-        ImGui::TextDisabled("TARGET BEARING");
-        ImGui::TextColored(ImVec4(0.30f, 0.85f, 1.0f, 1.0f),
-                           "%.0f degrees", state.targetAngleDegrees);
-        const float progress = state.requiredSamples == 0 ? 0.0f
-            : static_cast<float>(state.acceptedSamples) / state.requiredSamples;
-        char progressText[64]{};
-        std::snprintf(progressText, sizeof(progressText), "%zu / %zu events",
-                      state.acceptedSamples, state.requiredSamples);
-        ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0.0f), progressText);
-        if (!state.complete) {
-            if (!state.armed && ImGui::Button("Arm next event")) {
-                m_cfg.calibration->ArmNext();
-            }
-            if (state.armed) {
-                ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.28f, 1.0f),
-                                   "ARMED - waiting for a remote event");
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Stop")) m_cfg.calibration->Cancel();
-        } else if (ImGui::Button("Save calibration")) {
-            m_cfg.calibration->Save(nullptr);
-        }
-    }
-    ImGui::TextWrapped("%s", state.lastMessage.c_str());
-    const auto profile = m_cfg.calibration->ProfileSnapshot();
-    ImGui::TextDisabled("Stored samples: %zu | profile match: %s",
-                        profile.SampleCount(),
-                        profile.Matches(settings.audioProfile) ? "yes" : "stale");
-}
-
 void OverlayRenderer::DrawOverlayPage() {
-    if (!m_cfg.runtime_settings) return;
-    AppSettings settings = m_cfg.runtime_settings->Snapshot();
+    if (!m_config.runtimeSettings) return;
+    AppSettings settings = m_config.runtimeSettings->Snapshot();
     bool changed = false;
     ImGui::TextWrapped("The direction HUD is a separate click-through topmost window. "
                        "CS2 must use Fullscreen Windowed/Borderless mode.");
@@ -1158,14 +1056,14 @@ void OverlayRenderer::DrawOverlayPage() {
                                   0.1f, 5.0f, "%.1f s");
     changed |= ImGui::Checkbox("Center dot", &settings.overlay.showCenterDot);
     ImGui::TextDisabled("Global HUD hotkey: Ctrl+Alt+O");
-    if (changed) m_cfg.runtime_settings->Update(settings, true, nullptr);
+    if (changed) m_config.runtimeSettings->Update(settings, true, nullptr);
 }
 
 void OverlayRenderer::DrawAudioSystemPage() {
     ImGui::Text("Recognition model: %s",
-                m_cfg.model_version.empty() ? "unavailable" : m_cfg.model_version.c_str());
-    if (m_cfg.runtime_settings) {
-        AppSettings settings = m_cfg.runtime_settings->Snapshot();
+                m_config.modelVersion.empty() ? "unavailable" : m_config.modelVersion.c_str());
+    if (m_config.runtimeSettings) {
+        AppSettings settings = m_config.runtimeSettings->Snapshot();
         ImGui::TextUnformatted("Interface");
         ImGui::SetNextItemWidth(280.0f);
         float uiScalePercent = settings.uiScale * 100.0f;
@@ -1174,54 +1072,48 @@ void OverlayRenderer::DrawAudioSystemPage() {
                               AppSettings::kMaxUiScale * 100.0f, "%.0f%%")) {
             settings.uiScale = std::clamp(
                 uiScalePercent / 100.0f, AppSettings::kMinUiScale, AppSettings::kMaxUiScale);
-            m_cfg.runtime_settings->Update(settings, true, nullptr);
+            m_config.runtimeSettings->Update(settings, true, nullptr);
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset UI scale")) {
             settings.uiScale = AppSettings::kDefaultUiScale;
-            m_cfg.runtime_settings->Update(settings, true, nullptr);
+            m_config.runtimeSettings->Update(settings, true, nullptr);
         }
         ImGui::TextDisabled("Changes apply immediately and are saved to settings.json.");
         ImGui::Separator();
         ImGui::TextWrapped("Settings: %s",
-                           m_cfg.runtime_settings->Path().string().c_str());
-        if (m_cfg.calibration) {
-            ImGui::TextWrapped("Calibration: %s",
-                               m_cfg.calibration->Path().string().c_str());
-        }
-        if (ImGui::Checkbox("Write localized event JSONL session log",
+                           m_config.runtimeSettings->Path().string().c_str());
+        if (ImGui::Checkbox("Write schema-2 direction JSONL session log",
                             &settings.sessionLogging)) {
-            m_cfg.runtime_settings->Update(settings, true, nullptr);
+            m_config.runtimeSettings->Update(settings, true, nullptr);
         }
         if (ImGui::Button("Save settings now")) {
-            m_cfg.runtime_settings->Save(nullptr);
+            m_config.runtimeSettings->Save(nullptr);
         }
         ImGui::SameLine();
         if (ImGui::Button("Reset app settings")) {
-            m_cfg.runtime_settings->Reset(true);
+            m_config.runtimeSettings->Reset(true);
         }
     }
     ImGui::Separator();
     ImGui::TextWrapped("Capture contract: Windows system-output loopback, 48 kHz, "
                        "interleaved stereo. Disable third-party mono conversion or "
-                       "untracked spatial processing for the most repeatable direction profile.");
+                       "untracked spatial processing for repeatable model input.");
 }
 
 #else
 
 void OverlayRenderer::DrawUi() {}
 
-void OverlayRenderer::DrawEventTimeline(const std::deque<V4SoundEvent>&,
+void OverlayRenderer::DrawEventTimeline(const std::deque<SoundEvent>&,
                                          uint64_t, uint64_t) {}
 
-void OverlayRenderer::DrawRecentEvents(const std::deque<V4SoundEvent>&,
+void OverlayRenderer::DrawRecentEvents(const std::deque<SoundEvent>&,
                                         uint64_t) {}
 
 void OverlayRenderer::DrawTuneTable() {}
 
-void OverlayRenderer::DrawDirectionPage(const std::deque<LocalizedRecord>&) {}
-
-void OverlayRenderer::DrawCalibrationPage() {}
+void OverlayRenderer::DrawDirectionPage(const std::deque<DirectionSceneRecord>&) {}
 
 void OverlayRenderer::DrawOverlayPage() {}
 

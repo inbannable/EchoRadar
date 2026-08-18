@@ -28,12 +28,7 @@ _deps/
 *.ilk
 *.exp
 
-# Datasets (may be large)
-datasets/*.wav
-datasets/*.bin
-dataset/**
-!dataset/.gitkeep
-pilot-datasets/**
+# Local audio and generated corpora
 sounds/
 recordings/
 
@@ -46,6 +41,8 @@ ml/**/__pycache__/
 ml/.pytest_cache/
 ml/runs/
 ml/generated/
+ml/checkpoints/
+ml/**/.cache/
 
 # macOS
 .DS_Store

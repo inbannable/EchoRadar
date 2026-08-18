@@ -1,35 +1,18 @@
 add_executable(echoradar_tests
-    test_ring_buffer.cpp
     test_audio_ring_buffer.cpp
     test_audio_history_buffer.cpp
     test_stft.cpp
-    test_detectors.cpp
-    test_gunshot_event_detector.cpp
-    test_features.cpp
-    test_feature_history_buffer.cpp
-    test_localization.cpp
-    test_direction_estimator.cpp
-    test_direction_scene.cpp
-    test_tracking.cpp
-    test_app_settings.cpp
-    test_dataset_manager.cpp
-    test_asset_inventory.cpp
+    test_support.cpp
+    test_pcm_wav.cpp
     test_recognition.cpp
-    test_v4_recognition.cpp
+    test_direction_scene.cpp
+    test_app_settings.cpp
 )
-target_link_libraries(echoradar_tests
-    PRIVATE
-        echoradar_audio
-        echoradar_dsp
-        echoradar_detector
-        echoradar_events
-        echoradar_features
-        echoradar_localization
-        echoradar_settings
-        echoradar_tracking
-        echoradar_dataset
-        echoradar_recognition
-        GTest::gtest_main
+target_link_libraries(echoradar_tests PRIVATE
+    echoradar_audio
+    echoradar_direction
+    echoradar_settings
+    GTest::gtest_main
 )
 include(GoogleTest)
 gtest_discover_tests(echoradar_tests)

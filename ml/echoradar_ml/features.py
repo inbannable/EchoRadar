@@ -3,9 +3,9 @@ from __future__ import annotations
 import numpy as np
 
 from . import (
-    FFT_SIZE, HOP_SIZE, LEGACY_HOP_SIZE, MEL_BINS, ONSET_PREPROCESSING_VERSION,
+    FFT_SIZE, HOP_SIZE, MEL_BINS,
     PCEN_ALPHA, PCEN_DELTA, PCEN_EPSILON, PCEN_ROOT, PCEN_SMOOTHING,
-    PREPROCESSING_VERSION, SAMPLE_RATE, V4_PREPROCESSING_VERSION,
+    PREPROCESSING_VERSION, SAMPLE_RATE,
 )
 
 
@@ -56,7 +56,7 @@ def log_mel(
     stereo_samples: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     fft_size: int = FFT_SIZE,
-    hop_size: int = LEGACY_HOP_SIZE,
+    hop_size: int = HOP_SIZE,
 ) -> np.ndarray:
     if sample_rate != SAMPLE_RATE:
         raise ValueError("recognition features require 48 kHz input")
@@ -83,7 +83,7 @@ def stereo_mel_energy(
     stereo_samples: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     fft_size: int = FFT_SIZE,
-    hop_size: int = LEGACY_HOP_SIZE,
+    hop_size: int = HOP_SIZE,
 ) -> np.ndarray:
     spectrum = _stereo_spectrum(stereo_samples, sample_rate, fft_size, hop_size)
     if not len(spectrum):
@@ -135,7 +135,7 @@ def stereo_pcen(
     stereo_samples: np.ndarray,
     sample_rate: int = SAMPLE_RATE,
     fft_size: int = FFT_SIZE,
-    hop_size: int = LEGACY_HOP_SIZE,
+    hop_size: int = HOP_SIZE,
     smoothing: float = PCEN_SMOOTHING,
     alpha: float = PCEN_ALPHA,
     delta: float = PCEN_DELTA,
@@ -153,7 +153,7 @@ def stereo_onset_features(
     fft_size: int = FFT_SIZE,
     hop_size: int = HOP_SIZE,
 ) -> np.ndarray:
-    """Return v4 ``[time, 5, mel]`` recognition and spatial planes.
+    """Return current ``[time, 5, mel]`` recognition and spatial planes.
 
     Planes 0-1 are channel-order invariant PCEN and absolute energy.  Plane 2
     is clipped/scaled ILD.  Planes 3-4 are real/imaginary mel-band coherence,
@@ -201,11 +201,10 @@ def scene_activity(features: np.ndarray, smoothing_frames: int = 100) -> np.ndar
     return output
 
 
-def recognition_features(stereo_samples: np.ndarray, preprocessing_version: str) -> np.ndarray:
-    if preprocessing_version == PREPROCESSING_VERSION:
-        return log_mel(stereo_samples)[:, None, :]
-    if preprocessing_version == ONSET_PREPROCESSING_VERSION:
-        return stereo_pcen(stereo_samples)
-    if preprocessing_version == V4_PREPROCESSING_VERSION:
-        return stereo_onset_features(stereo_samples)
-    raise ValueError(f"unsupported preprocessing version: {preprocessing_version}")
+def recognition_features(
+    stereo_samples: np.ndarray,
+    preprocessing_version: str = PREPROCESSING_VERSION,
+) -> np.ndarray:
+    if preprocessing_version != PREPROCESSING_VERSION:
+        raise ValueError(f"unsupported preprocessing version: {preprocessing_version}")
+    return stereo_onset_features(stereo_samples)

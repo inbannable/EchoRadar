@@ -6,16 +6,14 @@ import json
 from pathlib import Path
 
 from .annotation import review_timeline
-from .direction import (
-    DirectionCorpusRow,
-    DirectionFeatures,
+from .direction_scenes import (
     FULL_DIRECTION_COUNTS,
     SMOKE_DIRECTION_COUNTS,
-    check_direction_parity,
-    evaluate_direction_rows,
-    evaluate_direction_package,
-    generate_direction_corpus,
     generate_direction_mixtures,
+)
+from .direction_training import (
+    check_direction_parity,
+    evaluate_direction_package,
     prepare_direction_cache,
     train_direction_model,
 )
@@ -36,24 +34,24 @@ def _prefixes(directory: Path, pattern: str) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="EchoRadar v4 CPU sound-onset training pipeline")
+    parser = argparse.ArgumentParser(description="EchoRadar CPU recognition and direction pipeline")
     commands = parser.add_subparsers(dest="command", required=True)
 
     prepare = commands.add_parser(
-        "prepare-assets", help="scan, onset-align, group-split, and write a reviewable v4 asset manifest"
+        "prepare-assets", help="scan, onset-align, group-split, and write a reviewable asset manifest"
     )
     prepare.add_argument("--asset-root", required=True, type=Path)
     prepare.add_argument("--output", required=True, type=Path)
     prepare.add_argument("--seed", type=int, default=20260720)
 
-    split = commands.add_parser("split", help="convert an existing inventory to the grouped v4 split")
+    split = commands.add_parser("split", help="convert an existing inventory to the grouped split")
     split.add_argument("--inventory", required=True, type=Path)
     split.add_argument("--asset-root", type=Path,
                        help="measure exact 48 kHz onset offsets; strongly recommended")
     split.add_argument("--output", required=True, type=Path)
     split.add_argument("--seed", type=int, default=20260720)
 
-    mixtures = commands.add_parser("mixtures", help="generate deterministic v4 continuous sessions")
+    mixtures = commands.add_parser("mixtures", help="generate deterministic continuous sessions")
     mixtures.add_argument("--manifest", required=True, type=Path)
     mixtures.add_argument("--asset-root", required=True, type=Path)
     mixtures.add_argument("--output", required=True, type=Path)
@@ -67,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     mixtures.add_argument("--session-gain-min-db", type=float, default=-30.0)
     mixtures.add_argument("--session-gain-max-db", type=float, default=6.0)
 
-    corpus = commands.add_parser("corpus", help="generate the locked 160/40/40 v4 spatial corpus")
+    corpus = commands.add_parser("corpus", help="generate the locked 160/40/40 spatial corpus")
     corpus.add_argument("--manifest", required=True, type=Path)
     corpus.add_argument("--asset-root", required=True, type=Path)
     corpus.add_argument("--output", required=True, type=Path)
@@ -95,11 +93,11 @@ def main(argv: list[str] | None = None) -> int:
     audit.add_argument("--output", type=Path)
     audit.add_argument("--require-locked", action="store_true")
 
-    cache = commands.add_parser("cache", help="precompute disk-backed v4 features before CPU training")
+    cache = commands.add_parser("cache", help="precompute disk-backed recognition features")
     cache.add_argument("--sessions", required=True, type=Path)
     cache.add_argument("--output", required=True, type=Path)
 
-    train = commands.add_parser("train", help="train/export the compact v4 model on CPU")
+    train = commands.add_parser("train", help="train/export the compact recognition model on CPU")
     train.add_argument("--sessions", required=True, type=Path)
     train.add_argument("--output", required=True, type=Path)
     train.add_argument("--cache", type=Path)
@@ -124,20 +122,6 @@ def main(argv: list[str] | None = None) -> int:
     annotate.add_argument("--wav", required=True, type=Path)
     annotate.add_argument("--labels", required=True, type=Path)
     annotate.add_argument("--predictions", type=Path)
-
-    direction = commands.add_parser(
-        "direction-corpus", help="render a deterministic known-bearing Steam Audio corpus"
-    )
-    direction.add_argument("--source-root", required=True, type=Path)
-    direction.add_argument("--output", required=True, type=Path)
-    direction.add_argument("--steam-audio-renderer", required=True, type=Path)
-    direction.add_argument("--azimuth-step", type=int, default=15)
-    direction.add_argument("--max-sources", type=int, default=0)
-    direction.add_argument(
-        "--conditions", nargs="+",
-        default=("clean", "gain", "noise", "mild-reverb", "occlusion", "channel-isolation"),
-        choices=("clean", "gain", "noise", "mild-reverb", "occlusion", "channel-isolation"),
-    )
 
     direction_mixtures = commands.add_parser(
         "direction-mixtures",
@@ -187,16 +171,15 @@ def main(argv: list[str] | None = None) -> int:
 
     direction_evaluate = commands.add_parser(
         "direction-evaluate",
-        help="evaluate a multi-source package or the legacy single-source v2 mapper",
+        help="evaluate a packaged multi-source direction model",
     )
     direction_evaluate.add_argument("--manifest", required=True, type=Path)
-    direction_evaluate.add_argument("--model", type=Path,
-                                    help="direction package; omit for the legacy v2 mapper")
+    direction_evaluate.add_argument("--model", required=True, type=Path,
+                                    help="direction model package directory")
     direction_evaluate.add_argument("--audio-root", type=Path)
     direction_evaluate.add_argument("--output", type=Path)
-    direction_evaluate.add_argument("--error-clips", type=Path)
-    direction_evaluate.add_argument("--split", choices=("all", "train", "validation", "dev", "test"),
-                                    default="all")
+    direction_evaluate.add_argument("--split", choices=("train", "dev", "test"),
+                                    default="test")
     direction_evaluate.add_argument("--footstep-only", action="store_true")
     direction_evaluate.add_argument("--gate", choices=("auto", "synthetic", "real"),
                                     default="auto")
@@ -271,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
                     renderer=renderer, ambient_only_fraction=0.25,
                     session_gain_min_db=-30.0, session_gain_max_db=6.0,
                 ))
-        print(f"generated {total} locked v4 sessions in {args.output}")
+        print(f"generated {total} locked sessions in {args.output}")
         return 0
     if args.command == "import-real":
         prefix = import_real_session(
@@ -317,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name:10s} precision={metrics['precision']:.3f} recall={metrics['recall']:.3f} "
                   f"fp/min={metrics['false_alerts_per_minute']:.2f} "
                   f"p95_latency={metrics['p95_delivery_latency_ms']:.1f}ms")
-        print(f"v4 acceptance: {'PASS' if report['acceptance_passed'] else 'FAIL'}")
+        print(f"recognition acceptance: {'PASS' if report['acceptance_passed'] else 'FAIL'}")
         return 1 if args.require_gates and not report["acceptance_passed"] else 0
     if args.command == "parity":
         error = check_onnx_parity(args.model, args.fixture)
@@ -325,22 +308,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "annotate":
         review_timeline(args.wav, args.labels, args.predictions)
-        return 0
-    if args.command == "direction-corpus":
-        if args.azimuth_step <= 0 or 360 % args.azimuth_step != 0:
-            parser.error("--azimuth-step must be a positive divisor of 360")
-        sources = sorted(args.source_root.rglob("*.wav"))
-        if args.max_sources > 0:
-            sources = sources[:args.max_sources]
-        if not sources:
-            parser.error("--source-root contains no WAV files")
-        renderer = SteamAudioRenderer(args.steam_audio_renderer)
-        rendered = generate_direction_corpus(
-            sources, args.output, renderer,
-            tuple(float(angle) for angle in range(0, 360, args.azimuth_step)),
-            conditions=args.conditions,
-        )
-        print(f"generated {len(rendered)} known-bearing clips in {args.output}")
         return 0
     if args.command == "direction-mixtures":
         counts = dict(FULL_DIRECTION_COUNTS if args.preset == "full" else SMOKE_DIRECTION_COUNTS)
@@ -376,41 +343,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Direction PyTorch/ONNX maximum absolute error: {error:.9g}")
         return 0
     if args.command == "direction-evaluate":
-        if args.model:
-            if args.split not in ("train", "dev", "test"):
-                parser.error("multi-source direction evaluation requires --split train, dev, or test")
-            report = asdict(evaluate_direction_package(
-                args.manifest, args.audio_root or args.manifest.parent,
-                args.model, args.split, args.footstep_only, args.gate,
-            ))
-            text = json.dumps(report, indent=2, sort_keys=True)
-            if args.output:
-                args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(text + "\n", encoding="utf-8")
-            print(text)
-            return 1 if args.require_gates and not report["acceptance_passed"] else 0
-        if args.footstep_only or args.require_gates or args.audio_root or args.gate != "auto":
-            parser.error("--footstep-only, --require-gates, --audio-root, and --gate require --model")
-        if args.split in ("dev", "test"):
-            parser.error("legacy direction evaluation supports --split all, train, or validation")
-        rows = []
-        for line in args.manifest.read_text(encoding="utf-8").splitlines():
-            payload = json.loads(line)
-            payload["features"] = DirectionFeatures(**payload["features"])
-            row = DirectionCorpusRow(**payload)
-            if args.split == "all" or row.source_split == args.split:
-                rows.append(row)
-        report = asdict(evaluate_direction_rows(
-            rows,
-            audio_root=args.manifest.parent,
-            error_clip_directory=args.error_clips,
+        report = asdict(evaluate_direction_package(
+            args.manifest, args.audio_root or args.manifest.parent,
+            args.model, args.split, args.footstep_only, args.gate,
         ))
         text = json.dumps(report, indent=2, sort_keys=True)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(text + "\n", encoding="utf-8")
         print(text)
-        return 0
+        return 1 if args.require_gates and not report["acceptance_passed"] else 0
     return 2
 
 

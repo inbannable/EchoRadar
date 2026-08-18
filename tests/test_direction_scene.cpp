@@ -1,8 +1,8 @@
-#include <localization/DirectionModelPackage.h>
-#include <localization/DirectionOnnxEngine.h>
-#include <localization/DirectionSceneCoordinator.h>
+#include <direction/DirectionModelPackage.h>
+#include <direction/DirectionOnnxEngine.h>
+#include <direction/DirectionSceneCoordinator.h>
 
-#include <dataset/AssetInventory.h>
+#include <support/FileSha256.h>
 
 #include <gtest/gtest.h>
 
@@ -31,12 +31,12 @@ DirectionModelPackage TestPackage() {
 
 TEST(DirectionSceneCoordinatorTest, ClustersBoundaryOnceAndResetsOnDiscontinuity) {
     DirectionSceneCoordinator coordinator;
-    V4SoundEvent first;
+    SoundEvent first;
     first.onsetSample = 10'000;
     first.streamGeneration = 4;
-    V4SoundEvent boundary = first;
+    SoundEvent boundary = first;
     boundary.onsetSample += 120u * 48'000u / 1000u;
-    V4SoundEvent next = boundary;
+    SoundEvent next = boundary;
     ++next.onsetSample;
 
     const uint64_t firstScene = coordinator.AddEvent(11, first);
@@ -60,10 +60,10 @@ TEST(DirectionSceneCoordinatorTest, ClustersBoundaryOnceAndResetsOnDiscontinuity
 
 TEST(DirectionSceneCoordinatorTest, OutOfOrderEventMovesAnchorToEarliestOnset) {
     DirectionSceneCoordinator coordinator;
-    V4SoundEvent later;
+    SoundEvent later;
     later.onsetSample = 20'000;
     later.streamGeneration = 9;
-    V4SoundEvent earlier = later;
+    SoundEvent earlier = later;
     earlier.onsetSample -= 80u * 48'000u / 1000u;
     const uint64_t sceneId = coordinator.AddEvent(1, later);
     EXPECT_EQ(coordinator.AddEvent(2, earlier), sceneId);
@@ -78,12 +78,12 @@ TEST(DirectionSceneCoordinatorTest, OutOfOrderEventMovesAnchorToEarliestOnset) {
 
 TEST(DirectionSceneCoordinatorTest, OutOfOrderEventCannotWidenGroupPastJoinWindow) {
     DirectionSceneCoordinator coordinator;
-    V4SoundEvent middle;
+    SoundEvent middle;
     middle.onsetSample = 20'000;
     middle.streamGeneration = 10;
-    V4SoundEvent later = middle;
+    SoundEvent later = middle;
     later.onsetSample += 100u * 48'000u / 1000u;
-    V4SoundEvent earlier = middle;
+    SoundEvent earlier = middle;
     earlier.onsetSample -= 100u * 48'000u / 1000u;
 
     const uint64_t middleScene = coordinator.AddEvent(1, middle);
@@ -196,7 +196,7 @@ TEST(DirectionModelPackageTest, ValidatesHashAndFlatContract) {
         model << "test-onnx-payload";
     }
     bool hashOk = false;
-    const std::string digest = AssetInventory::ComputeFileSha256(modelPath, &hashOk);
+    const std::string digest = ComputeFileSha256(modelPath, &hashOk);
     ASSERT_TRUE(hashOk);
     {
         std::ofstream metadata(root / "direction.json", std::ios::binary | std::ios::trunc);

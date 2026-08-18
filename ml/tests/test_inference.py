@@ -7,13 +7,13 @@ import unittest
 from echoradar_ml import (
     CLASS_NAMES, CONTEXT_FRAMES, FFT_SIZE, HOP_SIZE, INFERENCE_STRIDE_FRAMES,
     INPUT_CHANNELS, MEL_BINS, PCEN_ALPHA, PCEN_DELTA, PCEN_EPSILON, PCEN_ROOT,
-    PCEN_SMOOTHING, SAMPLE_RATE, SOURCE_NAMES, V4_PREPROCESSING_VERSION,
+    PCEN_SMOOTHING, PREPROCESSING_VERSION, SAMPLE_RATE, SOURCE_NAMES,
 )
 from echoradar_ml.inference import load_package
 
 
 class InferencePackageTest(unittest.TestCase):
-    def test_v4_package_contract_and_checksum(self):
+    def test_current_package_contract_and_checksum(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             model = root / "recognizer.onnx"
@@ -23,7 +23,7 @@ class InferencePackageTest(unittest.TestCase):
                 "model_version": "test-v4",
                 "model_file": model.name,
                 "model_sha256": hashlib.sha256(model.read_bytes()).hexdigest(),
-                "preprocessing_version": V4_PREPROCESSING_VERSION,
+                "preprocessing_version": PREPROCESSING_VERSION,
                 "sample_rate": SAMPLE_RATE,
                 "fft_size": FFT_SIZE,
                 "hop_size": HOP_SIZE,

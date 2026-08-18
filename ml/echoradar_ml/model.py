@@ -16,7 +16,7 @@ def build_model(
     class_count: int = len(CLASS_NAMES),
     source_count: int = len(SOURCE_NAMES),
 ):
-    """Build the compact causal v4 onset/source network.
+    """Build the compact causal onset/source network.
 
     The acoustic branch sees only channel-order-invariant energy.  Spatial
     planes join after their own small front-end, preventing phase or ILD from

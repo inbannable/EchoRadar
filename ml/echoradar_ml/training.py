@@ -12,7 +12,7 @@ import numpy as np
 from . import (
     CLASS_NAMES, CONTEXT_FRAMES, FFT_SIZE, HOP_SIZE, INFERENCE_STRIDE_FRAMES,
     INPUT_CHANNELS, MEL_BINS, PCEN_ALPHA, PCEN_DELTA, PCEN_EPSILON, PCEN_ROOT,
-    PCEN_SMOOTHING, SAMPLE_RATE, SOURCE_NAMES, V4_PREPROCESSING_VERSION,
+    PCEN_SMOOTHING, PREPROCESSING_VERSION, SAMPLE_RATE, SOURCE_NAMES,
 )
 from .audio import load_pcm_wav, to_stereo_48k
 from .features import scene_activity, stereo_onset_features
@@ -86,7 +86,7 @@ def _window_ends(labels: np.ndarray, stride_frames: int) -> list[int]:
 
 def padded_window(features: np.ndarray, end: int) -> np.ndarray:
     if features.ndim != 3 or features.shape[1:] != (INPUT_CHANNELS, MEL_BINS):
-        raise ValueError("features must have v4 shape [time, 5, 64]")
+        raise ValueError("features must have shape [time, 5, 64]")
     if not (0 < end <= len(features)):
         raise ValueError("window endpoint is outside feature sequence")
     output = np.zeros((CONTEXT_FRAMES, INPUT_CHANNELS, MEL_BINS), dtype=np.float32)
@@ -145,7 +145,7 @@ def _cache_key(prefix: Path, gain_db: float) -> str:
         "wav_mtime": wav.stat().st_mtime_ns,
         "labels_size": labels.stat().st_size,
         "labels_mtime": labels.stat().st_mtime_ns,
-        "preprocessing": V4_PREPROCESSING_VERSION,
+        "preprocessing": PREPROCESSING_VERSION,
         "cache_version": CACHE_VERSION,
         "gain_db": gain_db,
     }
@@ -194,7 +194,7 @@ def prepare_feature_cache(
                     "prefix": str(prefix.resolve()), "gain_db": gain_db,
                     "frames": len(features), "domain": domain,
                     "cache_version": CACHE_VERSION,
-                    "preprocessing_version": V4_PREPROCESSING_VERSION,
+                    "preprocessing_version": PREPROCESSING_VERSION,
                 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             labels_array = np.load(paths["labels"], mmap_mode="r", allow_pickle=False)
             records.append(CacheRecord(
@@ -507,8 +507,8 @@ def train_and_export(
     start_epoch = 0
     if resume:
         checkpoint = torch.load(resume, map_location="cpu", weights_only=False)
-        if checkpoint.get("preprocessing_version") != V4_PREPROCESSING_VERSION:
-            raise ValueError("resume checkpoint does not use the v4 preprocessing contract")
+        if checkpoint.get("preprocessing_version") != PREPROCESSING_VERSION:
+            raise ValueError("resume checkpoint does not use the current preprocessing contract")
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         start_epoch = int(checkpoint["epoch"])
@@ -563,7 +563,7 @@ def train_and_export(
         checkpoint_path = output / "training-checkpoint.pt"
         torch.save({
             "epoch": epoch + 1, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
-            "seed": seed, "preprocessing_version": V4_PREPROCESSING_VERSION,
+            "seed": seed, "preprocessing_version": PREPROCESSING_VERSION,
         }, checkpoint_path)
         print(f"training epoch {epoch + 1}/{epochs} loss={loss:.6f}", flush=True)
 
@@ -611,7 +611,7 @@ def train_and_export(
         "model_version": f"cs2-recognizer-v4-{seed}",
         "model_file": model_path.name,
         "model_sha256": digest,
-        "preprocessing_version": V4_PREPROCESSING_VERSION,
+        "preprocessing_version": PREPROCESSING_VERSION,
         "sample_rate": SAMPLE_RATE,
         "fft_size": FFT_SIZE,
         "hop_size": HOP_SIZE,

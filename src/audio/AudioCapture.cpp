@@ -9,11 +9,8 @@
 #include <cmath>
 #include <cstring>
 #include <iomanip>
-#include <iostream>
 #include <mutex>
 #include <sstream>
-#include <thread>
-#include <vector>
 
 namespace EchoRadar {
 namespace {
@@ -39,7 +36,6 @@ std::string FingerprintDeviceId(const ma_device_id& id) {
 }
 
 struct EndpointMatch {
-    ma_device_type type{ma_device_type_capture};
     AudioEndpointSelection selection{AudioEndpointSelection::FollowDefault};
     std::string requestedId;
     std::string requestedName;
@@ -51,13 +47,11 @@ struct EndpointMatch {
 ma_bool32 FindEndpointCallback(ma_context*, ma_device_type type,
                                const ma_device_info* nativeInfo, void* userData) {
     auto& match = *static_cast<EndpointMatch*>(userData);
-    if (type != match.type) return MA_TRUE;
+    if (type != ma_device_type_playback) return MA_TRUE;
 
     AudioDeviceInfo info;
     info.id = FingerprintDeviceId(nativeInfo->id);
     info.name = nativeInfo->name;
-    info.flow = type == ma_device_type_playback ? AudioDeviceFlow::Output : AudioDeviceFlow::Input;
-    info.type = type == ma_device_type_playback ? AudioDeviceType::Loopback : AudioDeviceType::Unknown;
     info.isDefault = nativeInfo->isDefault != 0;
     if (nativeInfo->nativeDataFormatCount != 0) {
         info.nativeChannels = nativeInfo->nativeDataFormats[0].channels;
@@ -84,8 +78,6 @@ ma_bool32 FindEndpointCallback(ma_context*, ma_device_type type,
 bool FindEndpoint(ma_context& context, const AudioCaptureConfig& config,
                   ma_device_id& id, AudioDeviceInfo& info) {
     EndpointMatch match;
-    match.type = config.source == AudioCaptureSource::SystemLoopback
-        ? ma_device_type_playback : ma_device_type_capture;
     match.selection = config.selection;
     match.requestedId = config.endpointId;
     match.requestedName = config.endpointName;
@@ -106,8 +98,6 @@ struct AudioCapture::Impl {
 
     AudioCaptureConfig config;
     std::unique_ptr<AudioRingBuffer> ring;
-    AudioCapture::FrameCallback legacyCallback;
-
     std::atomic<float> leftRms{0.0f};
     std::atomic<float> rightRms{0.0f};
     std::atomic<float> leftPeak{0.0f};
@@ -182,17 +172,6 @@ struct AudioCapture::Impl {
         }
         self.UpdateLevels(samples, frameCount);
 
-        if (self.legacyCallback) {
-            AudioFrame frame;
-            frame.sample_rate = self.config.sampleRate;
-            frame.left.resize(frameCount);
-            frame.right.resize(frameCount);
-            for (ma_uint32 index = 0; index < frameCount; ++index) {
-                frame.left[index] = samples[index * 2];
-                frame.right[index] = samples[index * 2 + 1];
-            }
-            self.legacyCallback(frame);
-        }
     }
 
     static void StopCallback(ma_device* nativeDevice) {
@@ -231,9 +210,7 @@ struct AudioCapture::Impl {
             return false;
         }
 
-        const ma_device_type deviceType = config.source == AudioCaptureSource::SystemLoopback
-            ? ma_device_type_loopback : ma_device_type_capture;
-        ma_device_config nativeConfig = ma_device_config_init(deviceType);
+        ma_device_config nativeConfig = ma_device_config_init(ma_device_type_loopback);
         nativeConfig.capture.format = ma_format_f32;
         nativeConfig.capture.channels = config.channels;
         nativeConfig.sampleRate = config.sampleRate;
@@ -292,13 +269,12 @@ AudioCapture::AudioCapture() : m_impl(std::make_unique<Impl>()) {}
 AudioCapture::~AudioCapture() { Stop(); }
 
 bool AudioCapture::Start(const AudioCaptureConfig& config) {
-    return StartInternal(config, nullptr);
+    return StartInternal(config);
 }
 
-bool AudioCapture::StartInternal(const AudioCaptureConfig& config, FrameCallback callback) {
+bool AudioCapture::StartInternal(const AudioCaptureConfig& config) {
     Stop();
     m_impl->config = config;
-    m_impl->legacyCallback = std::move(callback);
     m_impl->droppedFrames.store(0, std::memory_order_relaxed);
     m_impl->lossSerial.store(0, std::memory_order_relaxed);
     m_impl->observedLossSerial = 0;
@@ -320,11 +296,9 @@ bool AudioCapture::StartInternal(const AudioCaptureConfig& config, FrameCallback
         return false;
     }
 #ifndef _WIN32
-    if (config.source == AudioCaptureSource::SystemLoopback) {
-        m_impl->SetError("System loopback capture is supported only by the Windows WASAPI build");
-        m_impl->state.store(AudioCaptureState::Unsupported, std::memory_order_release);
-        return false;
-    }
+    m_impl->SetError("System loopback capture is supported only by the Windows WASAPI build");
+    m_impl->state.store(AudioCaptureState::Unsupported, std::memory_order_release);
+    return false;
 #endif
 
     m_impl->ring = std::make_unique<AudioRingBuffer>(config.bufferFrames);
@@ -387,48 +361,6 @@ void AudioCapture::Poll() {
     }
 }
 
-bool AudioCapture::StartDefault() {
-    AudioCaptureConfig config;
-    config.source = AudioCaptureSource::InputDevice;
-    config.selection = AudioEndpointSelection::FollowDefault;
-    if (!Start(config) || !IsRunning()) {
-        Stop();
-        return false;
-    }
-    return true;
-}
-
-bool AudioCapture::StartDeviceByName(const std::string& name) {
-    AudioCaptureConfig config;
-    config.source = AudioCaptureSource::InputDevice;
-    config.selection = AudioEndpointSelection::Fixed;
-    config.endpointName = name;
-    if (Start(config) && IsRunning()) return true;
-    std::cerr << "[AudioCapture] Input device '" << name
-              << "' not found. Falling back to the default input.\n";
-    Stop();
-    return StartDefault();
-}
-
-bool AudioCapture::Start(const std::string& deviceName, FrameCallback callback) {
-    AudioCaptureConfig config;
-    config.source = AudioCaptureSource::InputDevice;
-    if (deviceName.empty()) {
-        config.selection = AudioEndpointSelection::FollowDefault;
-        return StartInternal(config, std::move(callback)) && IsRunning();
-    }
-
-    config.selection = AudioEndpointSelection::Fixed;
-    config.endpointName = deviceName;
-    FrameCallback fallbackCallback = callback;
-    if (StartInternal(config, std::move(callback)) && IsRunning()) return true;
-    std::cerr << "[AudioCapture] Input device '" << deviceName
-              << "' not found. Falling back to the default input.\n";
-    config.selection = AudioEndpointSelection::FollowDefault;
-    config.endpointName.clear();
-    return StartInternal(config, std::move(fallbackCallback)) && IsRunning();
-}
-
 void AudioCapture::Stop() {
     if (!m_impl) return;
     m_impl->state.store(AudioCaptureState::Stopped, std::memory_order_release);
@@ -437,7 +369,6 @@ void AudioCapture::Stop() {
         ma_context_uninit(&m_impl->context);
         m_impl->contextInitialized = false;
     }
-    m_impl->legacyCallback = nullptr;
 }
 
 bool AudioCapture::IsRunning() const {
@@ -522,33 +453,6 @@ AudioLevels AudioCapture::GetCurrentLevels() const {
         m_impl->leftPeak.load(std::memory_order_relaxed),
         m_impl->rightPeak.load(std::memory_order_relaxed),
     };
-}
-
-AudioFrame AudioCapture::GetFrame(uint32_t timeoutMs) {
-    constexpr size_t kBlockFrames = 480;
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(timeoutMs);
-    std::vector<float> interleaved(kBlockFrames * 2);
-    while (std::chrono::steady_clock::now() < deadline) {
-        const AudioReadResult result = Read(interleaved.data(), kBlockFrames);
-        if (result.frames == kBlockFrames) {
-            AudioFrame frame;
-            frame.sample_rate = 48000;
-            frame.left.resize(kBlockFrames);
-            frame.right.resize(kBlockFrames);
-            for (size_t index = 0; index < kBlockFrames; ++index) {
-                frame.left[index] = interleaved[index * 2];
-                frame.right[index] = interleaved[index * 2 + 1];
-            }
-            return frame;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    AudioFrame silence;
-    silence.sample_rate = 48000;
-    silence.left.assign(kBlockFrames, 0.0f);
-    silence.right.assign(kBlockFrames, 0.0f);
-    return silence;
 }
 
 } // namespace EchoRadar

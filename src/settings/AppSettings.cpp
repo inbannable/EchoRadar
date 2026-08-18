@@ -1,13 +1,12 @@
 #include "AppSettings.h"
 
-#include <dataset/DatasetJson.h>
+#include <support/FlatJson.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
-#include <sstream>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -57,28 +56,10 @@ AppSettings AppSettings::Clamp(AppSettings settings) {
         settings.audioProfile.leftRightIsolationPercent, 0.0f, 100.0f);
     settings.audioProfile.displayAspectRatio = std::clamp(
         settings.audioProfile.displayAspectRatio, 1.0f, 4.0f);
-    settings.localization.sampleWindowMs = std::clamp(
-        settings.localization.sampleWindowMs, 100u, 600u);
-    settings.localization.preOnsetMs = std::min(
-        settings.localization.preOnsetMs, settings.localization.sampleWindowMs - 20u);
-    const auto clampPeak = [](LocalizationTuning::PeakWindowTuning& peak) {
-        peak.beforePeakMs = std::clamp(peak.beforePeakMs, 0u, 80u);
-        peak.afterPeakMs = std::clamp(peak.afterPeakMs, 30u, 300u);
-        peak.envelopeSmoothingMs = std::clamp(peak.envelopeSmoothingMs, 1u, 20u);
-        peak.minimumPeakToNoiseDb = std::clamp(peak.minimumPeakToNoiseDb, 0.0f, 40.0f);
-        peak.minimumActiveFrameFraction = std::clamp(
-            peak.minimumActiveFrameFraction, 0.001f, 0.8f);
-    };
-    clampPeak(settings.localization.footstepPeak);
-    clampPeak(settings.localization.gunshotPeak);
-    settings.localization.minimumConfidence = std::clamp(
-        settings.localization.minimumConfidence, 0.01f, 1.0f);
-    settings.localization.secondaryRatio = std::clamp(
-        settings.localization.secondaryRatio, 0.25f, 1.0f);
-    settings.localization.secondaryMinimumSeparationDegrees = std::clamp(
-        settings.localization.secondaryMinimumSeparationDegrees, 15.0f, 180.0f);
-    settings.overlay.radiusPixels = std::clamp(settings.overlay.radiusPixels, 40.0f, 400.0f);
-    settings.overlay.thicknessPixels = std::clamp(settings.overlay.thicknessPixels, 2.0f, 32.0f);
+    settings.overlay.radiusPixels = std::clamp(
+        settings.overlay.radiusPixels, 40.0f, 400.0f);
+    settings.overlay.thicknessPixels = std::clamp(
+        settings.overlay.thicknessPixels, 2.0f, 32.0f);
     settings.overlay.opacity = std::clamp(settings.overlay.opacity, 0.05f, 1.0f);
     settings.overlay.offsetX = std::clamp(settings.overlay.offsetX, -2000.0f, 2000.0f);
     settings.overlay.offsetY = std::clamp(settings.overlay.offsetY, -2000.0f, 2000.0f);
@@ -86,9 +67,6 @@ AppSettings AppSettings::Clamp(AppSettings settings) {
         settings.overlay.footstepLifetimeSeconds, 0.1f, 10.0f);
     settings.overlay.gunshotLifetimeSeconds = std::clamp(
         settings.overlay.gunshotLifetimeSeconds, 0.1f, 10.0f);
-    // A stale build once wrote a subnormal float here when the settings struct
-    // layout changed. Treat that bit pattern as corrupted and restore a usable
-    // default instead of silently clamping the UI to its smallest size.
     if (!std::isfinite(settings.uiScale) ||
         (settings.uiScale > 0.0f && settings.uiScale < kMinUiScale * 0.5f)) {
         settings.uiScale = kDefaultUiScale;
@@ -108,7 +86,9 @@ std::filesystem::path AppSettingsFile::DefaultPath() {
     }
 #else
     if (const char* config = std::getenv("XDG_CONFIG_HOME")) {
-        if (*config != '\0') return std::filesystem::path(config) / "EchoRadar" / "settings.json";
+        if (*config != '\0') {
+            return std::filesystem::path(config) / "EchoRadar" / "settings.json";
+        }
     }
 #endif
     return std::filesystem::current_path() / ".echoradar" / "settings.json";
@@ -119,21 +99,22 @@ bool AppSettingsFile::Load(const std::filesystem::path& path,
                            std::string* error) {
     const std::string text = detail::ReadFileToString(path.string());
     if (text.empty()) {
-        settings = AppSettings{};
+        settings = {};
         if (error) *error = "Settings file is unavailable; defaults are active";
         return false;
     }
     const auto values = detail::ParseFlatJson(text);
     const uint64_t schema = detail::GetU64(values, "schema_version", 0);
-    if (schema == 0 || schema > AppSettings::kSchemaVersion) {
-        settings = AppSettings{};
+    if (schema != 2 && schema != AppSettings::kSchemaVersion) {
+        settings = {};
         if (error) *error = "Settings schema is incompatible; defaults are active";
         return false;
     }
 
     AppSettings loaded;
     loaded.audioProfile.name = detail::GetStr(values, "audio_profile_name", "Default");
-    loaded.audioProfile.eqProfile = ParseEq(detail::GetStr(values, "eq_profile", "natural"));
+    loaded.audioProfile.eqProfile = ParseEq(
+        detail::GetStr(values, "eq_profile", "natural"));
     loaded.audioProfile.leftRightIsolationPercent = detail::GetFloatVal(
         values, "lr_isolation_percent", 0.0f);
     loaded.audioProfile.perspectiveCorrection = detail::GetBoolVal(
@@ -142,59 +123,43 @@ bool AppSettingsFile::Load(const std::filesystem::path& path,
         values, "display_aspect_ratio", 16.0f / 9.0f);
     loaded.audioProfile.spatialEnhancement = ParseEnhancement(
         detail::GetStr(values, "spatial_enhancement", "unknown"));
-    loaded.audioProfile.outputEndpointId = detail::GetStr(values, "output_endpoint_id");
+    loaded.audioProfile.outputEndpointId =
+        detail::GetStr(values, "output_endpoint_id");
 
-    loaded.localization.localizeFootsteps = detail::GetBoolVal(
-        values, "localize_footsteps", true);
-    loaded.localization.localizeGunshots = detail::GetBoolVal(
-        values, "localize_gunshots", true);
-    loaded.localization.sampleWindowMs = static_cast<uint32_t>(detail::GetU64(
-        values, "localization_sample_ms", 240));
-    loaded.localization.preOnsetMs = static_cast<uint32_t>(detail::GetU64(
-        values, "localization_pre_onset_ms", 40));
-    loaded.localization.footstepPeak.beforePeakMs = static_cast<uint32_t>(detail::GetU64(
-        values, "footstep_peak_before_ms", 18));
-    loaded.localization.footstepPeak.afterPeakMs = static_cast<uint32_t>(detail::GetU64(
-        values, "footstep_peak_after_ms", 150));
-    loaded.localization.footstepPeak.envelopeSmoothingMs = static_cast<uint32_t>(detail::GetU64(
-        values, "footstep_peak_smoothing_ms", 4));
-    loaded.localization.footstepPeak.minimumPeakToNoiseDb = detail::GetFloatVal(
-        values, "footstep_peak_min_snr_db", 6.0f);
-    loaded.localization.footstepPeak.minimumActiveFrameFraction = detail::GetFloatVal(
-        values, "footstep_peak_min_active_fraction", 0.02f);
-    loaded.localization.gunshotPeak.beforePeakMs = static_cast<uint32_t>(detail::GetU64(
-        values, "gunshot_peak_before_ms", 8));
-    loaded.localization.gunshotPeak.afterPeakMs = static_cast<uint32_t>(detail::GetU64(
-        values, "gunshot_peak_after_ms", 75));
-    loaded.localization.gunshotPeak.envelopeSmoothingMs = static_cast<uint32_t>(detail::GetU64(
-        values, "gunshot_peak_smoothing_ms", 4));
-    loaded.localization.gunshotPeak.minimumPeakToNoiseDb = detail::GetFloatVal(
-        values, "gunshot_peak_min_snr_db", 7.0f);
-    loaded.localization.gunshotPeak.minimumActiveFrameFraction = detail::GetFloatVal(
-        values, "gunshot_peak_min_active_fraction", 0.015f);
-    loaded.localization.minimumConfidence = detail::GetFloatVal(
-        values, "localization_min_confidence", 0.35f);
-    loaded.localization.showSecondaryDirection = detail::GetBoolVal(
-        values, "show_secondary_direction", false);
-    loaded.localization.secondaryRatio = detail::GetFloatVal(
-        values, "secondary_ratio", 0.75f);
-    loaded.localization.secondaryMinimumSeparationDegrees = detail::GetFloatVal(
-        values, "secondary_min_separation_degrees", 60.0f);
+    if (schema == 2) {
+        loaded.direction.enableFootsteps = detail::GetBoolVal(
+            values, "localize_footsteps", true);
+        loaded.direction.enableGunshots = detail::GetBoolVal(
+            values, "localize_gunshots", true);
+    } else {
+        loaded.direction.enableFootsteps = detail::GetBoolVal(
+            values, "direction_footsteps_enabled", true);
+        loaded.direction.enableGunshots = detail::GetBoolVal(
+            values, "direction_gunshots_enabled", true);
+    }
 
     loaded.overlay.visibility = ParseVisibility(
         detail::GetStr(values, "overlay_visibility", "cs2-only"));
-    loaded.overlay.radiusPixels = detail::GetFloatVal(values, "overlay_radius_px", 110.0f);
-    loaded.overlay.thicknessPixels = detail::GetFloatVal(values, "overlay_thickness_px", 8.0f);
-    loaded.overlay.opacity = detail::GetFloatVal(values, "overlay_opacity", 0.90f);
-    loaded.overlay.offsetX = detail::GetFloatVal(values, "overlay_offset_x", 0.0f);
-    loaded.overlay.offsetY = detail::GetFloatVal(values, "overlay_offset_y", 0.0f);
+    loaded.overlay.radiusPixels = detail::GetFloatVal(
+        values, "overlay_radius_px", 110.0f);
+    loaded.overlay.thicknessPixels = detail::GetFloatVal(
+        values, "overlay_thickness_px", 8.0f);
+    loaded.overlay.opacity = detail::GetFloatVal(
+        values, "overlay_opacity", 0.90f);
+    loaded.overlay.offsetX = detail::GetFloatVal(
+        values, "overlay_offset_x", 0.0f);
+    loaded.overlay.offsetY = detail::GetFloatVal(
+        values, "overlay_offset_y", 0.0f);
     loaded.overlay.footstepLifetimeSeconds = detail::GetFloatVal(
         values, "overlay_footstep_lifetime_s", 1.2f);
     loaded.overlay.gunshotLifetimeSeconds = detail::GetFloatVal(
         values, "overlay_gunshot_lifetime_s", 0.8f);
-    loaded.overlay.showCenterDot = detail::GetBoolVal(values, "overlay_center_dot", false);
-    loaded.uiScale = detail::GetFloatVal(values, "ui_scale", AppSettings::kDefaultUiScale);
+    loaded.overlay.showCenterDot = detail::GetBoolVal(
+        values, "overlay_center_dot", false);
+    loaded.uiScale = detail::GetFloatVal(
+        values, "ui_scale", AppSettings::kDefaultUiScale);
     loaded.sessionLogging = detail::GetBoolVal(values, "session_logging", true);
+
     settings = AppSettings::Clamp(std::move(loaded));
     if (error) error->clear();
     return true;
@@ -205,7 +170,9 @@ bool AppSettingsFile::Save(const std::filesystem::path& path,
                            std::string* error) {
     const AppSettings safe = AppSettings::Clamp(settings);
     std::error_code filesystemError;
-    std::filesystem::create_directories(path.parent_path(), filesystemError);
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), filesystemError);
+    }
     if (filesystemError) {
         if (error) *error = "Could not create settings directory";
         return false;
@@ -216,7 +183,7 @@ bool AppSettingsFile::Save(const std::filesystem::path& path,
         if (error) *error = "Could not open settings file for writing";
         return false;
     }
-    const auto quoted = [&](const std::string& value) {
+    const auto quoted = [](const std::string& value) {
         return '"' + detail::JsonEscapeStr(value) + '"';
     };
     output << std::setprecision(9)
@@ -224,40 +191,37 @@ bool AppSettingsFile::Save(const std::filesystem::path& path,
            << "  \"schema_version\": " << AppSettings::kSchemaVersion << ",\n"
            << "  \"audio_profile_name\": " << quoted(safe.audioProfile.name) << ",\n"
            << "  \"eq_profile\": " << quoted(ToString(safe.audioProfile.eqProfile)) << ",\n"
-           << "  \"lr_isolation_percent\": " << safe.audioProfile.leftRightIsolationPercent << ",\n"
-           << "  \"perspective_correction\": " << (safe.audioProfile.perspectiveCorrection ? "true" : "false") << ",\n"
-           << "  \"display_aspect_ratio\": " << safe.audioProfile.displayAspectRatio << ",\n"
-           << "  \"spatial_enhancement\": " << quoted(ToString(safe.audioProfile.spatialEnhancement)) << ",\n"
-           << "  \"output_endpoint_id\": " << quoted(safe.audioProfile.outputEndpointId) << ",\n"
-           << "  \"localize_footsteps\": " << (safe.localization.localizeFootsteps ? "true" : "false") << ",\n"
-           << "  \"localize_gunshots\": " << (safe.localization.localizeGunshots ? "true" : "false") << ",\n"
-           << "  \"localization_sample_ms\": " << safe.localization.sampleWindowMs << ",\n"
-           << "  \"localization_pre_onset_ms\": " << safe.localization.preOnsetMs << ",\n"
-           << "  \"footstep_peak_before_ms\": " << safe.localization.footstepPeak.beforePeakMs << ",\n"
-           << "  \"footstep_peak_after_ms\": " << safe.localization.footstepPeak.afterPeakMs << ",\n"
-           << "  \"footstep_peak_smoothing_ms\": " << safe.localization.footstepPeak.envelopeSmoothingMs << ",\n"
-           << "  \"footstep_peak_min_snr_db\": " << safe.localization.footstepPeak.minimumPeakToNoiseDb << ",\n"
-           << "  \"footstep_peak_min_active_fraction\": " << safe.localization.footstepPeak.minimumActiveFrameFraction << ",\n"
-           << "  \"gunshot_peak_before_ms\": " << safe.localization.gunshotPeak.beforePeakMs << ",\n"
-           << "  \"gunshot_peak_after_ms\": " << safe.localization.gunshotPeak.afterPeakMs << ",\n"
-           << "  \"gunshot_peak_smoothing_ms\": " << safe.localization.gunshotPeak.envelopeSmoothingMs << ",\n"
-           << "  \"gunshot_peak_min_snr_db\": " << safe.localization.gunshotPeak.minimumPeakToNoiseDb << ",\n"
-           << "  \"gunshot_peak_min_active_fraction\": " << safe.localization.gunshotPeak.minimumActiveFrameFraction << ",\n"
-           << "  \"localization_min_confidence\": " << safe.localization.minimumConfidence << ",\n"
-           << "  \"show_secondary_direction\": " << (safe.localization.showSecondaryDirection ? "true" : "false") << ",\n"
-           << "  \"secondary_ratio\": " << safe.localization.secondaryRatio << ",\n"
-           << "  \"secondary_min_separation_degrees\": " << safe.localization.secondaryMinimumSeparationDegrees << ",\n"
-           << "  \"overlay_visibility\": " << quoted(VisibilityName(safe.overlay.visibility)) << ",\n"
+           << "  \"lr_isolation_percent\": "
+           << safe.audioProfile.leftRightIsolationPercent << ",\n"
+           << "  \"perspective_correction\": "
+           << (safe.audioProfile.perspectiveCorrection ? "true" : "false") << ",\n"
+           << "  \"display_aspect_ratio\": "
+           << safe.audioProfile.displayAspectRatio << ",\n"
+           << "  \"spatial_enhancement\": "
+           << quoted(ToString(safe.audioProfile.spatialEnhancement)) << ",\n"
+           << "  \"output_endpoint_id\": "
+           << quoted(safe.audioProfile.outputEndpointId) << ",\n"
+           << "  \"direction_footsteps_enabled\": "
+           << (safe.direction.enableFootsteps ? "true" : "false") << ",\n"
+           << "  \"direction_gunshots_enabled\": "
+           << (safe.direction.enableGunshots ? "true" : "false") << ",\n"
+           << "  \"overlay_visibility\": "
+           << quoted(VisibilityName(safe.overlay.visibility)) << ",\n"
            << "  \"overlay_radius_px\": " << safe.overlay.radiusPixels << ",\n"
-           << "  \"overlay_thickness_px\": " << safe.overlay.thicknessPixels << ",\n"
+           << "  \"overlay_thickness_px\": "
+           << safe.overlay.thicknessPixels << ",\n"
            << "  \"overlay_opacity\": " << safe.overlay.opacity << ",\n"
            << "  \"overlay_offset_x\": " << safe.overlay.offsetX << ",\n"
            << "  \"overlay_offset_y\": " << safe.overlay.offsetY << ",\n"
-           << "  \"overlay_footstep_lifetime_s\": " << safe.overlay.footstepLifetimeSeconds << ",\n"
-           << "  \"overlay_gunshot_lifetime_s\": " << safe.overlay.gunshotLifetimeSeconds << ",\n"
-           << "  \"overlay_center_dot\": " << (safe.overlay.showCenterDot ? "true" : "false") << ",\n"
+           << "  \"overlay_footstep_lifetime_s\": "
+           << safe.overlay.footstepLifetimeSeconds << ",\n"
+           << "  \"overlay_gunshot_lifetime_s\": "
+           << safe.overlay.gunshotLifetimeSeconds << ",\n"
+           << "  \"overlay_center_dot\": "
+           << (safe.overlay.showCenterDot ? "true" : "false") << ",\n"
            << "  \"ui_scale\": " << safe.uiScale << ",\n"
-           << "  \"session_logging\": " << (safe.sessionLogging ? "true" : "false") << "\n"
+           << "  \"session_logging\": "
+           << (safe.sessionLogging ? "true" : "false") << "\n"
            << "}\n";
     output.flush();
     if (!output) {

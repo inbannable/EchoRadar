@@ -49,7 +49,7 @@ class FeaturesTest(unittest.TestCase):
         actual = stereo_pcen_from_energy(stereo_mel_energy(samples), -12.0)
         np.testing.assert_allclose(actual, expected, atol=2e-5, rtol=2e-5)
 
-    def test_v4_spatial_planes_transform_predictably_on_channel_swap(self):
+    def test_current_spatial_planes_transform_predictably_on_channel_swap(self):
         times = np.arange(FFT_SIZE * 3, dtype=np.float32) / SAMPLE_RATE
         left = np.sin(2 * np.pi * 900 * times).astype(np.float32)
         right = 0.5 * np.roll(left, 3)

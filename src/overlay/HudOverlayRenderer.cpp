@@ -168,15 +168,9 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         return TRUE;
     default: break;
     }
-<<<<<<< HEAD
     if (platform && platform->imguiContext) {
         ImGui::SetCurrentContext(platform->imguiContext);
-        if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
-            return true;
-        }
     }
-=======
-    if (platform && platform->imguiContext) ImGui::SetCurrentContext(platform->imguiContext);
     const bool isMouseMessage =
         (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
         (message >= WM_NCMOUSEMOVE && message <= WM_NCXBUTTONDBLCLK) ||
@@ -184,8 +178,10 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         message == WM_NCMOUSEHOVER || message == WM_NCMOUSELEAVE ||
         message == WM_CAPTURECHANGED;
     if (!isMouseMessage && ImGui::GetCurrentContext() &&
-        ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) return true;
->>>>>>> fd6579ebd09daa30de54739f32935b96cc1036fd
+        ImGui_ImplWin32_WndProcHandler(
+            window, message, wParam, lParam)) {
+        return true;
+    }
     switch (message) {
     case WM_SIZE:
         if (platform && platform->device && wParam != SIZE_MINIMIZED) {
@@ -332,34 +328,7 @@ void HudOverlayRenderer::Shutdown() {
     m_running = false;
 }
 
-void HudOverlayRenderer::PushEvent(const V4SoundEvent& event,
-                                   const DirectionResult& direction) {
-    DirectionSceneResult scene;
-    scene.sceneId = direction.sceneId;
-    scene.status = direction.status;
-    if (direction.status == DirectionStatus::Estimated ||
-        direction.status == DirectionStatus::LowConfidence) {
-        scene.sources[0] = {
-            direction.primaryAngleDegrees,
-            direction.primaryElevationDegrees,
-            direction.confidence,
-            direction.uncertaintyDegrees,
-        };
-        scene.sourceCount = 1;
-        if (direction.secondaryAngleDegrees) {
-            scene.sources[1] = {
-                *direction.secondaryAngleDegrees,
-                direction.secondaryElevationDegrees.value_or(0.0f),
-                direction.secondaryConfidence,
-                direction.uncertaintyDegrees,
-            };
-            scene.sourceCount = 2;
-        }
-    }
-    PushScene(event, scene);
-}
-
-void HudOverlayRenderer::PushScene(const V4SoundEvent& event,
+void HudOverlayRenderer::PushScene(const SoundEvent& event,
                                    const DirectionSceneResult& direction) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_markers.push_back({event, direction, std::chrono::steady_clock::now()});

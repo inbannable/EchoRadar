@@ -67,28 +67,6 @@ float STFTProcessor::BinToHz(uint32_t bin) const {
            static_cast<float>(m_cfg.fft_size);
 }
 
-Spectrogram STFTProcessor::Process(const std::vector<float>& samples) {
-    std::vector<float> interleaved(samples.size() * 2, 0.0f);
-    for (size_t i = 0; i < samples.size(); ++i) {
-        interleaved[i * 2] = samples[i];
-        interleaved[i * 2 + 1] = samples[i];
-    }
-
-    PushInterleaved(interleaved.data(), samples.size());
-
-    Spectrogram monoSpec;
-    monoSpec.fft_size = m_cfg.fft_size;
-    monoSpec.hop_size = m_cfg.hop_size;
-    monoSpec.sample_rate = m_cfg.sample_rate;
-
-    STFTFrame frame;
-    while (PopFrame(frame)) {
-        monoSpec.magnitude.push_back(frame.left.magnitudes);
-    }
-
-    return monoSpec;
-}
-
 void STFTProcessor::BuildFFTPlan() {
     m_fft_cfg = kiss_fftr_alloc(static_cast<int>(m_cfg.fft_size), 0, nullptr, nullptr);
     if (m_fft_cfg == nullptr) {
@@ -149,37 +127,6 @@ void STFTProcessor::MaybeCompactBuffers() {
     m_right_samples.erase(m_right_samples.begin(), m_right_samples.begin() + m_next_window_start);
     m_stream_start_sample += static_cast<uint64_t>(m_next_window_start);
     m_next_window_start = 0;
-}
-
-std::pair<Spectrogram, Spectrogram>
-STFTProcessor::ProcessStereo(const AudioFrame& frame) {
-    if (frame.left.size() != frame.right.size()) {
-        throw std::invalid_argument("AudioFrame left/right channels must have equal length");
-    }
-
-    const size_t frameCount = frame.left.size();
-    std::vector<float> interleaved(frameCount * 2);
-    for (size_t i = 0; i < frameCount; ++i) {
-        interleaved[i * 2] = frame.left[i];
-        interleaved[i * 2 + 1] = frame.right[i];
-    }
-
-    PushInterleaved(interleaved.data(), frameCount);
-
-    Spectrogram leftSpec;
-    leftSpec.fft_size = m_cfg.fft_size;
-    leftSpec.hop_size = m_cfg.hop_size;
-    leftSpec.sample_rate = m_cfg.sample_rate;
-
-    Spectrogram rightSpec = leftSpec;
-
-    STFTFrame stftFrame;
-    while (PopFrame(stftFrame)) {
-        leftSpec.magnitude.push_back(stftFrame.left.magnitudes);
-        rightSpec.magnitude.push_back(stftFrame.right.magnitudes);
-    }
-
-    return {std::move(leftSpec), std::move(rightSpec)};
 }
 
 void STFTProcessor::ComputeChannelFrame(const std::vector<float>& source,

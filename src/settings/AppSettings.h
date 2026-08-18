@@ -1,6 +1,7 @@
 #pragma once
 
-#include <localization/LocalizationTypes.h>
+#include <audio/AudioTypes.h>
+#include <direction/DirectionTypes.h>
 
 #include <filesystem>
 #include <mutex>
@@ -8,15 +9,33 @@
 
 namespace EchoRadar {
 
+struct OverlaySettings {
+    enum class Visibility : uint8_t {
+        Off,
+        Cs2Only,
+        Always,
+    };
+
+    Visibility visibility{Visibility::Cs2Only};
+    float radiusPixels{110.0f};
+    float thicknessPixels{8.0f};
+    float opacity{0.90f};
+    float offsetX{0.0f};
+    float offsetY{0.0f};
+    float footstepLifetimeSeconds{1.2f};
+    float gunshotLifetimeSeconds{0.8f};
+    bool showCenterDot{false};
+};
+
 struct AppSettings {
-    static constexpr uint32_t kSchemaVersion = 2;
+    static constexpr uint32_t kSchemaVersion = 3;
     static constexpr float kDefaultUiScale = 1.25f;
     static constexpr float kMinUiScale = 0.75f;
     static constexpr float kMaxUiScale = 2.0f;
 
     uint32_t schemaVersion{kSchemaVersion};
     AudioProfile audioProfile;
-    LocalizationTuning localization;
+    DirectionSettings direction;
     OverlaySettings overlay;
     float uiScale{kDefaultUiScale};
     bool sessionLogging{true};
@@ -33,10 +52,10 @@ public:
                      std::string* error = nullptr);
 };
 
-/// Synchronized live settings shared by the DSP, control UI, and HUD threads.
 class RuntimeSettingsStore {
 public:
-    explicit RuntimeSettingsStore(std::filesystem::path path = AppSettingsFile::DefaultPath());
+    explicit RuntimeSettingsStore(
+        std::filesystem::path path = AppSettingsFile::DefaultPath());
 
     bool Load(std::string* error = nullptr);
     bool Save(std::string* error = nullptr) const;

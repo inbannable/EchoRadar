@@ -1,4 +1,4 @@
-#include <recognition/PcmWav.h>
+#include <audio/PcmWav.h>
 
 #include <phonon.h>
 

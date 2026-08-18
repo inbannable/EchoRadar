@@ -1,6 +1,6 @@
 #include <audio/AudioCapture.h>
 #include <audio/AudioDeviceManager.h>
-#include <recognition/PcmWav.h>
+#include <audio/PcmWav.h>
 
 #include <atomic>
 #include <chrono>
@@ -31,13 +31,10 @@ const char* StateName(AudioCaptureState state) {
     return "Unknown";
 }
 
-void PrintDevices(AudioCaptureSource source) {
+void PrintDevices() {
     AudioDeviceManager manager;
-    const auto& devices = source == AudioCaptureSource::SystemLoopback
-        ? manager.GetOutputDevices() : manager.GetInputDevices();
-    std::cout << (source == AudioCaptureSource::SystemLoopback
-                      ? "Output endpoints" : "Input endpoints")
-              << " (" << devices.size() << "):\n";
+    const auto& devices = manager.GetOutputDevices();
+    std::cout << "Output endpoints (" << devices.size() << "):\n";
     for (const auto& device : devices) {
         std::cout << "  " << device.id << "  " << device.name;
         if (device.isDefault) std::cout << "  <default>";
@@ -61,21 +58,9 @@ int main(int argc, char* argv[]) {
     double recordSeconds = 0.0;
     for (int index = 1; index < argc; ++index) {
         const std::string argument(argv[index]);
-        if (argument == "--source" && index + 1 < argc) {
-            const std::string source(argv[++index]);
-            if (source == "loopback") config.source = AudioCaptureSource::SystemLoopback;
-            else if (source == "input") config.source = AudioCaptureSource::InputDevice;
-            else {
-                std::cerr << "--source must be loopback or input\n";
-                return 2;
-            }
-        } else if (argument == "--audio-output-id" && index + 1 < argc) {
+        if (argument == "--audio-output-id" && index + 1 < argc) {
             config.selection = AudioEndpointSelection::Fixed;
             config.endpointId = argv[++index];
-        } else if (argument == "--device" && index + 1 < argc) {
-            config.source = AudioCaptureSource::InputDevice;
-            config.selection = AudioEndpointSelection::Fixed;
-            config.endpointName = argv[++index];
         } else if (argument == "--list-devices" || argument == "-l") {
             listOnly = true;
         } else if (argument == "--record" && index + 1 < argc) {
@@ -91,10 +76,8 @@ int main(int argc, char* argv[]) {
         } else if (argument == "--help" || argument == "-h") {
             std::cout
                 << "Usage: audio_monitor [options]\n\n"
-                << "  --source loopback|input    Default: loopback\n"
-                << "  --list-devices             List endpoints for the selected source\n"
+                << "  --list-devices             List Windows output endpoints\n"
                 << "  --audio-output-id <id>     Pin a loopback render endpoint\n"
-                << "  --device <partial-name>    Pin an input device (legacy diagnostics)\n"
                 << "  --record <wav>             Save captured PCM16 WAV\n"
                 << "  --seconds <n>              Stop after n seconds\n";
             return 0;
@@ -108,7 +91,7 @@ int main(int argc, char* argv[]) {
         return 2;
     }
     if (listOnly) {
-        PrintDevices(config.source);
+        PrintDevices();
         return 0;
     }
     if (!recordPath.empty() && recordSeconds <= 0.0) recordSeconds = 10.0;

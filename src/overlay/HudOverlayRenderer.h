@@ -1,7 +1,7 @@
 #pragma once
 
-#include <localization/LocalizationTypes.h>
-#include <recognition/V4RecognitionTypes.h>
+#include <direction/DirectionTypes.h>
+#include <recognition/RecognitionTypes.h>
 #include <settings/AppSettings.h>
 
 #include <chrono>
@@ -11,7 +11,6 @@
 
 namespace EchoRadar {
 
-/// Independent transparent, click-through, topmost direction HUD.
 class HudOverlayRenderer {
 public:
     struct Config {
@@ -24,15 +23,15 @@ public:
     bool Initialise();
     void Shutdown();
     void Render();
-    void PushEvent(const V4SoundEvent& event, const DirectionResult& direction);
-    void PushScene(const V4SoundEvent& event, const DirectionSceneResult& direction);
+    void PushScene(const SoundEvent& event,
+                   const DirectionSceneResult& direction);
     bool IsRunning() const { return m_running; }
 
     struct PlatformImpl;
 
 private:
     struct Marker {
-        V4SoundEvent event;
+        SoundEvent event;
         DirectionSceneResult direction;
         std::chrono::steady_clock::time_point created;
     };

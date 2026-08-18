@@ -10,7 +10,7 @@ TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
 @unittest.skipUnless(TORCH_AVAILABLE, "PyTorch is installed by the locked training environment")
 class ModelTest(unittest.TestCase):
-    def test_v4_onset_and_source_heads(self):
+    def test_current_onset_and_source_heads(self):
         import torch
 
         model = build_model().eval()

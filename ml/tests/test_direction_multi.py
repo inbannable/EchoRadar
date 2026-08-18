@@ -9,24 +9,26 @@ import numpy as np
 
 from echoradar_ml import SAMPLE_RATE
 from echoradar_ml.audio import Audio, write_pcm16_wav
-from echoradar_ml.direction import (
-    DIRECTION_OUTPUT_SHAPE,
+from echoradar_ml.direction_scenes import (
     DIRECTION_SCENE_FRAMES,
     DIRECTION_SCENE_SAMPLES,
     DirectionSceneSource,
     SceneDirection,
+    generate_direction_scene,
+    great_circle_degrees,
+    sample_scene_directions,
+    target_class_schedule,
+    target_count_schedule,
+)
+from echoradar_ml.direction_training import (
+    DIRECTION_OUTPUT_SHAPE,
     classwise_adpit_mse,
     build_direction_model,
     decode_multi_accdoa,
     direction_vector,
     evaluate_direction_outputs,
-    generate_direction_scene,
-    great_circle_degrees,
     load_direction_package,
     prepare_direction_cache,
-    sample_scene_directions,
-    target_class_schedule,
-    target_count_schedule,
 )
 from echoradar_ml.manifest import Asset
 

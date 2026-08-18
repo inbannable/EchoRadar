@@ -1,11 +1,9 @@
 #pragma once
-#include "../common/Types.h"
 #include <kiss_fftr.h>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
-#include <utility>
 #include <vector>
 
 namespace EchoRadar {
@@ -55,10 +53,6 @@ public:
     const Config& GetConfig() const { return m_cfg; }
     uint32_t      GetBinCount() const { return m_cfg.fft_size / 2 + 1; }
     float         BinToHz(uint32_t bin) const;
-
-    // Legacy compatibility helpers used by existing app/tests.
-    Spectrogram Process(const std::vector<float>& samples);
-    std::pair<Spectrogram, Spectrogram> ProcessStereo(const AudioFrame& frame);
 
 private:
     Config m_cfg;
