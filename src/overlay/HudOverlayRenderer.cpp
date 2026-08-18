@@ -165,9 +165,12 @@ LRESULT WINAPI HudWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     case WM_SETCURSOR: return TRUE;
     default: break;
     }
-    if (platform && platform->imguiContext) ImGui::SetCurrentContext(platform->imguiContext);
-    if (ImGui::GetCurrentContext() &&
-        ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) return true;
+    if (platform && platform->imguiContext) {
+        ImGui::SetCurrentContext(platform->imguiContext);
+        if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
+            return true;
+        }
+    }
     switch (message) {
     case WM_SIZE:
         if (platform && platform->device && wParam != SIZE_MINIMIZED) {

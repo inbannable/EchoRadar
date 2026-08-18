@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
                 << "  --audio-output-id <id>     Pin capture to one render endpoint\n"
                 << "  --model <package-dir>      Load an experimental V4 package\n"
                 << "  --settings <json>          Override the per-user settings path\n"
-                << "  --no-overlay               Do not initialize the V4 event chart UI\n";
+                << "  --no-overlay               Do not initialize the V4 event chart UI or HUD\n";
             return 0;
         } else {
             std::cerr << "Unknown or incomplete option: " << argument << '\n';

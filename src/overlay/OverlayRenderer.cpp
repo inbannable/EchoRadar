@@ -148,10 +148,9 @@ LRESULT WINAPI OverlayWindowProc(HWND window, UINT message,
 
     if (platform != nullptr && platform->imguiContext != nullptr) {
         ImGui::SetCurrentContext(platform->imguiContext);
-    }
-    if (ImGui::GetCurrentContext() != nullptr &&
-        ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
-        return true;
+        if (ImGui_ImplWin32_WndProcHandler(window, message, wParam, lParam)) {
+            return true;
+        }
     }
 
     switch (message) {
@@ -253,6 +252,7 @@ bool OverlayRenderer::Initialise() {
 
     IMGUI_CHECKVERSION();
     m_platform->imguiContext = ImGui::CreateContext();
+    ImGui::SetCurrentContext(m_platform->imguiContext);
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
