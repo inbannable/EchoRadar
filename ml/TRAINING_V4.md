@@ -3,7 +3,8 @@
 The v4 pipeline is ready to prepare data and train a candidate model. It emits
 `gunshot` and `footstep` onsets, treats every other sound as a named hard
 negative, learns `self` / `remote` / `unknown` source hints, and calibrates a
-quiet/busy footstep policy. It does not train a direction estimator.
+quiet/busy footstep policy. Direction is deliberately packaged separately; see
+[`DIRECTION_TRAINING.md`](DIRECTION_TRAINING.md) for the 0–3-source 3D model.
 
 ## 1. Environment
 

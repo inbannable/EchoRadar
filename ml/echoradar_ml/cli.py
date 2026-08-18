@@ -9,8 +9,15 @@ from .annotation import review_timeline
 from .direction import (
     DirectionCorpusRow,
     DirectionFeatures,
+    FULL_DIRECTION_COUNTS,
+    SMOKE_DIRECTION_COUNTS,
+    check_direction_parity,
     evaluate_direction_rows,
+    evaluate_direction_package,
     generate_direction_corpus,
+    generate_direction_mixtures,
+    prepare_direction_cache,
+    train_direction_model,
 )
 from .evaluation import evaluate_sessions
 from .inference import check_onnx_parity
@@ -132,14 +139,68 @@ def main(argv: list[str] | None = None) -> int:
         choices=("clean", "gain", "noise", "mild-reverb", "occlusion", "channel-isolation"),
     )
 
+    direction_mixtures = commands.add_parser(
+        "direction-mixtures",
+        help="render deterministic 0-3 source 3D direction scenes through Steam Audio",
+    )
+    direction_mixtures.add_argument("--manifest", required=True, type=Path)
+    direction_mixtures.add_argument("--asset-root", required=True, type=Path)
+    direction_mixtures.add_argument("--output", required=True, type=Path)
+    direction_mixtures.add_argument("--steam-audio-renderer", required=True, type=Path)
+    direction_mixtures.add_argument("--preset", choices=("full", "smoke"), default="full")
+    direction_mixtures.add_argument("--train-count", type=int)
+    direction_mixtures.add_argument("--dev-count", type=int)
+    direction_mixtures.add_argument("--test-count", type=int)
+    direction_mixtures.add_argument("--close-test-fraction", type=float, default=0.20)
+    direction_mixtures.add_argument("--seed", type=int, default=20260720)
+
+    direction_cache = commands.add_parser(
+        "direction-cache", help="cache [5,48,64] features and Multi-ACCDOA targets"
+    )
+    direction_cache.add_argument("--manifest", required=True, type=Path)
+    direction_cache.add_argument("--audio-root", type=Path)
+    direction_cache.add_argument("--output", required=True, type=Path)
+    direction_cache.add_argument(
+        "--splits", nargs="+", choices=("train", "dev", "test"),
+        default=("train", "dev", "test"),
+    )
+    direction_cache.add_argument("--feature-dtype", choices=("float16", "float32"),
+                                 default="float16")
+
+    direction_train = commands.add_parser(
+        "direction-train", help="train and package the compact 3D Multi-ACCDOA model"
+    )
+    direction_train.add_argument("--cache", required=True, type=Path)
+    direction_train.add_argument("--output", required=True, type=Path)
+    direction_train.add_argument("--epochs", type=int, default=20)
+    direction_train.add_argument("--batch-size", type=int, default=64)
+    direction_train.add_argument("--threads", type=int, default=0)
+    direction_train.add_argument("--resume", type=Path)
+    direction_train.add_argument("--seed", type=int, default=20260720)
+
+    direction_parity = commands.add_parser(
+        "direction-parity", help="compare direction.onnx against its PyTorch parity fixture"
+    )
+    direction_parity.add_argument("--model", required=True, type=Path,
+                                  help="direction model package directory")
+    direction_parity.add_argument("--fixture", type=Path)
+
     direction_evaluate = commands.add_parser(
-        "direction-evaluate", help="evaluate a direction corpus manifest against the v2 mapper"
+        "direction-evaluate",
+        help="evaluate a multi-source package or the legacy single-source v2 mapper",
     )
     direction_evaluate.add_argument("--manifest", required=True, type=Path)
+    direction_evaluate.add_argument("--model", type=Path,
+                                    help="direction package; omit for the legacy v2 mapper")
+    direction_evaluate.add_argument("--audio-root", type=Path)
     direction_evaluate.add_argument("--output", type=Path)
     direction_evaluate.add_argument("--error-clips", type=Path)
-    direction_evaluate.add_argument("--split", choices=("all", "train", "validation"),
+    direction_evaluate.add_argument("--split", choices=("all", "train", "validation", "dev", "test"),
                                     default="all")
+    direction_evaluate.add_argument("--footstep-only", action="store_true")
+    direction_evaluate.add_argument("--gate", choices=("auto", "synthetic", "real"),
+                                    default="auto")
+    direction_evaluate.add_argument("--require-gates", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "prepare-assets":
@@ -281,7 +342,57 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"generated {len(rendered)} known-bearing clips in {args.output}")
         return 0
+    if args.command == "direction-mixtures":
+        counts = dict(FULL_DIRECTION_COUNTS if args.preset == "full" else SMOKE_DIRECTION_COUNTS)
+        for split_name in ("train", "dev", "test"):
+            override = getattr(args, f"{split_name}_count")
+            if override is not None:
+                if override <= 0:
+                    parser.error(f"--{split_name}-count must be positive")
+                counts[split_name] = override
+        renderer = SteamAudioRenderer(args.steam_audio_renderer)
+        manifest = generate_direction_mixtures(
+            args.manifest, args.asset_root, args.output, renderer, counts,
+            args.seed, args.close_test_fraction,
+        )
+        print(f"generated {sum(counts.values())} multi-source direction scenes: {manifest}")
+        return 0
+    if args.command == "direction-cache":
+        cache = prepare_direction_cache(
+            args.manifest, args.audio_root or args.manifest.parent, args.output,
+            args.splits, args.feature_dtype,
+        )
+        print(f"direction feature cache ready: {cache}")
+        return 0
+    if args.command == "direction-train":
+        package = train_direction_model(
+            args.cache, args.output, args.epochs, args.seed, args.batch_size,
+            args.threads, args.resume,
+        )
+        print(f"exported direction model package: {package}")
+        return 0
+    if args.command == "direction-parity":
+        error = check_direction_parity(args.model, args.fixture)
+        print(f"Direction PyTorch/ONNX maximum absolute error: {error:.9g}")
+        return 0
     if args.command == "direction-evaluate":
+        if args.model:
+            if args.split not in ("train", "dev", "test"):
+                parser.error("multi-source direction evaluation requires --split train, dev, or test")
+            report = asdict(evaluate_direction_package(
+                args.manifest, args.audio_root or args.manifest.parent,
+                args.model, args.split, args.footstep_only, args.gate,
+            ))
+            text = json.dumps(report, indent=2, sort_keys=True)
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(text + "\n", encoding="utf-8")
+            print(text)
+            return 1 if args.require_gates and not report["acceptance_passed"] else 0
+        if args.footstep_only or args.require_gates or args.audio_root or args.gate != "auto":
+            parser.error("--footstep-only, --require-gates, --audio-root, and --gate require --model")
+        if args.split in ("dev", "test"):
+            parser.error("legacy direction evaluation supports --split all, train, or validation")
         rows = []
         for line in args.manifest.read_text(encoding="utf-8").splitlines():
             payload = json.loads(line)

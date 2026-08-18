@@ -25,6 +25,7 @@ public:
     void Shutdown();
     void Render();
     void PushEvent(const V4SoundEvent& event, const DirectionResult& direction);
+    void PushScene(const V4SoundEvent& event, const DirectionSceneResult& direction);
     bool IsRunning() const { return m_running; }
 
     struct PlatformImpl;
@@ -32,7 +33,7 @@ public:
 private:
     struct Marker {
         V4SoundEvent event;
-        DirectionResult direction;
+        DirectionSceneResult direction;
         std::chrono::steady_clock::time_point created;
     };
 

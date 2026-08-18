@@ -9,6 +9,7 @@ add_executable(echoradar_tests
     test_feature_history_buffer.cpp
     test_localization.cpp
     test_direction_estimator.cpp
+    test_direction_scene.cpp
     test_tracking.cpp
     test_app_settings.cpp
     test_dataset_manager.cpp

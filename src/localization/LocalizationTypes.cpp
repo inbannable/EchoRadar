@@ -35,4 +35,23 @@ float CircularDistanceDegrees(float left, float right) {
     return std::min(difference, 360.0f - difference);
 }
 
+DirectionResult DirectionSceneResult::LegacyResult(uint64_t eventId) const {
+    DirectionResult result;
+    result.eventId = eventId;
+    result.sceneId = sceneId;
+    result.status = status;
+    result.inferenceMilliseconds = inferenceMilliseconds;
+    if (sourceCount == 0) return result;
+    result.primaryAngleDegrees = sources[0].azimuthDegrees;
+    result.primaryElevationDegrees = sources[0].elevationDegrees;
+    result.confidence = sources[0].confidence;
+    result.uncertaintyDegrees = sources[0].uncertaintyDegrees;
+    if (sourceCount > 1) {
+        result.secondaryAngleDegrees = sources[1].azimuthDegrees;
+        result.secondaryElevationDegrees = sources[1].elevationDegrees;
+        result.secondaryConfidence = sources[1].confidence;
+    }
+    return result;
+}
+
 } // namespace EchoRadar

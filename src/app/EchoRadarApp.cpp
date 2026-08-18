@@ -109,6 +109,46 @@ bool EchoRadarApp::Initialise() {
         }
     }
 
+    if (!m_cfg.directionModelDirectory.empty()) {
+        DirectionModelPackage directionPackage;
+        if (!DirectionModelPackage::Load(
+                m_cfg.directionModelDirectory, directionPackage, &m_directionError)) {
+            std::cerr << "[EchoRadar] 3D direction inference paused: "
+                      << m_directionError << '\n';
+        } else {
+            m_directionModelVersion = directionPackage.modelVersion;
+            m_directionEngine = std::make_unique<DirectionOnnxEngine>(
+                std::move(directionPackage));
+            if (!m_directionEngine->IsLoaded()) {
+                m_directionError = m_directionEngine->LoadError();
+                std::cerr << "[EchoRadar] 3D direction inference paused: "
+                          << m_directionError << '\n';
+            } else {
+                std::vector<float> validationInput(
+                    static_cast<size_t>(m_directionEngine->Package().contextSamples) * 2u,
+                    0.0f);
+                std::string validationError;
+                const DirectionSceneResult validation = m_directionEngine->Predict(
+                    0, 0, 0, 0, validationInput,
+                    DirectionSceneResult::kGunshotClassBit |
+                        DirectionSceneResult::kFootstepClassBit,
+                    &validationError);
+                if (validation.status == DirectionStatus::InferenceFailed ||
+                    validation.status == DirectionStatus::ModelUnavailable ||
+                    !validationError.empty()) {
+                    m_directionError = validationError.empty()
+                        ? "direction model startup contract check failed" : validationError;
+                    std::cerr << "[EchoRadar] 3D direction inference paused: "
+                              << m_directionError << '\n';
+                    m_directionEngine.reset();
+                } else {
+                    std::cout << "[EchoRadar] Scene-level 3D direction model loaded: "
+                              << m_directionModelVersion << '\n';
+                }
+            }
+        }
+    }
+
     if (m_cfg.show_overlay) {
         OverlayRenderer::Config overlayConfig;
         overlayConfig.sample_rate = 48000;
@@ -165,13 +205,19 @@ void EchoRadarApp::Stop() {
 
 void EchoRadarApp::HandleEvent(const V4SoundEvent& event) {
     if (m_overlay) m_overlay->PushV4Event(event);
+    const uint64_t eventId = m_nextEventId++;
+    if (!m_cfg.directionModelDirectory.empty()) {
+        m_sceneCoordinator.AddEvent(eventId, event);
+    }
     const AppSettings settings = m_settings ? m_settings->Snapshot() : AppSettings{};
     const bool enabled = event.soundClass == SoundClass::Gunshot
         ? settings.localization.localizeGunshots
         : settings.localization.localizeFootsteps;
     // Keep the clip job even when direction display is disabled. The same
     // audio window is useful for listening and recognition debugging.
-    m_pendingLocalizations.push_back({m_nextEventId++, event, enabled});
+    if (m_cfg.legacyDirectionDiagnostic) {
+        m_pendingLocalizations.push_back({eventId, event, enabled});
+    }
     std::printf(
         "\n[V4 %s] source=%s scene=%s confidence=%.3f onset=%.3fs detected=%.3fs "
         "delivered=%.3fs stream=%llu\n",
@@ -187,6 +233,68 @@ void EchoRadarApp::ProcessPendingLocalizations() {
     const AppSettings settings = m_settings->Snapshot();
     const uint64_t newest = m_audioHistory.GetNewestSampleExclusive();
     const uint64_t oldest = m_audioHistory.GetOldestSample();
+
+    if (!m_cfg.directionModelDirectory.empty()) {
+        const uint8_t enabledClassMask = static_cast<uint8_t>(
+            (settings.localization.localizeGunshots
+                ? DirectionSceneResult::kGunshotClassBit : 0u) |
+            (settings.localization.localizeFootsteps
+                ? DirectionSceneResult::kFootstepClassBit : 0u));
+        for (const DirectionSceneJob& scene : m_sceneCoordinator.TakeReady(newest, oldest)) {
+            DirectionSceneResult sceneResult;
+            sceneResult.sceneId = scene.sceneId;
+            sceneResult.streamGeneration = scene.streamGeneration;
+            sceneResult.anchorEventSample = scene.anchorEventSample;
+            sceneResult.sceneStartSample = scene.sceneStartSample;
+            sceneResult.sceneEndSample = scene.sceneEndSample;
+            sceneResult.enabledClassMask = enabledClassMask;
+            sceneResult.modelVersion = m_directionModelVersion;
+            sceneResult.status = enabledClassMask == 0
+                ? DirectionStatus::Disabled : DirectionStatus::AudioUnavailable;
+            std::vector<float> clip;
+            std::filesystem::path clipPath;
+            if (scene.audioAvailable && m_audioHistory.ExtractWindow(
+                    scene.sceneStartSample,
+                    static_cast<size_t>(scene.sceneEndSample - scene.sceneStartSample),
+                    clip)) {
+                clipPath = SaveSceneClip(scene, clip);
+            }
+            if (!m_directionEngine) {
+                if (enabledClassMask != 0) sceneResult.status = DirectionStatus::ModelUnavailable;
+            } else if (enabledClassMask == 0 || !clip.empty()) {
+                std::string directionError;
+                sceneResult = m_directionEngine->Predict(
+                    scene.sceneId, scene.streamGeneration, scene.anchorEventSample,
+                    scene.sceneStartSample, clip, enabledClassMask, &directionError);
+                if (!directionError.empty()) {
+                    std::cerr << "[EchoRadar] Direction scene " << scene.sceneId
+                              << " failed: " << directionError << '\n';
+                }
+            }
+            sceneResult.resultDeliverySample = newest;
+            sceneResult.deliveryMilliseconds = newest >= scene.anchorEventSample
+                ? static_cast<double>(newest - scene.anchorEventSample) * 1000.0 / 48000.0
+                : 0.0;
+
+            for (const DirectionSceneEvent& member : scene.events) {
+                const DirectionResult compatibility = sceneResult.LegacyResult(member.eventId);
+                if (m_overlay) {
+                    m_overlay->PushLocalizedEvent(member.event, compatibility, clipPath);
+                }
+                LogLocalizedEvent(member.event, compatibility, clipPath, &sceneResult);
+            }
+            if (m_hud && sceneResult.sourceCount > 0 &&
+                (sceneResult.status == DirectionStatus::Estimated ||
+                 sceneResult.status == DirectionStatus::LowConfidence)) {
+                m_hud->PushScene(scene.events.front().event, sceneResult);
+            }
+            std::printf("[DIR scene=%llu] sources=%u status=%s inference=%.3fms\n",
+                        static_cast<unsigned long long>(sceneResult.sceneId),
+                        sceneResult.sourceCount, ToString(sceneResult.status),
+                        sceneResult.inferenceMilliseconds);
+        }
+    }
+
     const uint64_t preFrames = static_cast<uint64_t>(
         settings.localization.preOnsetMs) * 48000u / 1000u;
 
@@ -272,7 +380,7 @@ void EchoRadarApp::ProcessPendingLocalizations() {
                       direction.status == DirectionStatus::LowConfidence)) {
             m_hud->PushEvent(pending.event, direction);
         }
-        LogLocalizedEvent(pending.event, direction, clipPath);
+        LogLocalizedEvent(pending.event, direction, clipPath, nullptr);
         std::printf("[DIR %s] angle=%.0f confidence=%.3f uncertainty=%.0f "
                     "profile=%s status=%s\n",
                     ToString(pending.event.soundClass), direction.primaryAngleDegrees,
@@ -301,9 +409,28 @@ std::filesystem::path EchoRadarApp::SaveEventClip(
     return path;
 }
 
+std::filesystem::path EchoRadarApp::SaveSceneClip(
+    const DirectionSceneJob& scene, const std::vector<float>& clip) {
+    if (m_clipDirectory.empty() || clip.empty()) return {};
+    const std::filesystem::path path = m_clipDirectory /
+        ("scene-" + std::to_string(scene.sceneId) + ".wav");
+    PcmAudio audio;
+    audio.sampleRate = 48000;
+    audio.channels = 2;
+    audio.interleaved = clip;
+    std::string error;
+    if (!WritePcm16Wav(path, audio, &error)) {
+        std::cerr << "[EchoRadar] Could not save direction scene audio "
+                  << path << ": " << error << '\n';
+        return {};
+    }
+    return path;
+}
+
 void EchoRadarApp::LogLocalizedEvent(const V4SoundEvent& event,
                                      const DirectionResult& direction,
-                                     const std::filesystem::path& clipPath) {
+                                     const std::filesystem::path& clipPath,
+                                     const DirectionSceneResult* scene) {
     if (!m_settings || !m_settings->Snapshot().sessionLogging) return;
     if (!m_sessionLog) {
         std::error_code error;
@@ -335,8 +462,43 @@ void EchoRadarApp::LogLocalizedEvent(const V4SoundEvent& event,
                  << ",\"feature_schema\":" << direction.featureSchemaVersion
                  << ",\"mapper_version\":" << direction.mapperVersion
                  << ",\"clip_path\":\""
-                 << detail::JsonEscapeStr(clipPath.string()) << "\""
-                 << "}\n";
+                 << detail::JsonEscapeStr(clipPath.string()) << "\"";
+    if (scene) {
+        m_sessionLog
+            << ",\"scene_id\":" << scene->sceneId
+            << ",\"scene_start_sample\":" << scene->sceneStartSample
+            << ",\"scene_end_sample\":" << scene->sceneEndSample
+            << ",\"scene_anchor_onset_sample\":" << scene->anchorEventSample
+            << ",\"scene_result_delivery_sample\":" << scene->resultDeliverySample
+            << ",\"scene_delivery_ms\":" << scene->deliveryMilliseconds
+            << ",\"direction_source_count\":" << scene->sourceCount
+            << ",\"enabled_class_mask\":{\"gunshot\":"
+            << ((scene->enabledClassMask & DirectionSceneResult::kGunshotClassBit)
+                    ? "true" : "false")
+            << ",\"footstep\":"
+            << ((scene->enabledClassMask & DirectionSceneResult::kFootstepClassBit)
+                    ? "true" : "false") << "}"
+            << ",\"direction_model_version\":\""
+            << detail::JsonEscapeStr(scene->modelVersion) << "\""
+            << ",\"direction_preprocessing_version\":\""
+            << detail::JsonEscapeStr(scene->preprocessingVersion) << "\""
+            << ",\"direction_feature_frames\":" << scene->featureFrames
+            << ",\"direction_sources\":[";
+        for (uint32_t index = 0; index < std::min<uint32_t>(
+                 scene->sourceCount,
+                 static_cast<uint32_t>(DirectionSceneResult::kMaximumSources)); ++index) {
+            if (index != 0) m_sessionLog << ',';
+            const auto& source = scene->sources[index];
+            m_sessionLog
+                << "{\"azimuth_degrees\":" << source.azimuthDegrees
+                << ",\"elevation_degrees\":" << source.elevationDegrees
+                << ",\"confidence\":" << source.confidence
+                << ",\"uncertainty_degrees\":" << source.uncertaintyDegrees
+                << '}';
+        }
+        m_sessionLog << ']';
+    }
+    m_sessionLog << "}\n";
     m_sessionLog.flush();
 }
 
@@ -373,6 +535,7 @@ void EchoRadarApp::DSPLoop() {
             if (m_recognizer) m_recognizer->OnStreamReset(currentGeneration);
             m_audioHistory.Reset();
             m_pendingLocalizations.clear();
+            m_sceneCoordinator.Reset(currentGeneration);
         }
         if (read.frames == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));

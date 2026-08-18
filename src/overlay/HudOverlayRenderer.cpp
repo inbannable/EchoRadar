@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 
 #ifdef _WIN32
@@ -324,6 +325,33 @@ void HudOverlayRenderer::Shutdown() {
 
 void HudOverlayRenderer::PushEvent(const V4SoundEvent& event,
                                    const DirectionResult& direction) {
+    DirectionSceneResult scene;
+    scene.sceneId = direction.sceneId;
+    scene.status = direction.status;
+    if (direction.status == DirectionStatus::Estimated ||
+        direction.status == DirectionStatus::LowConfidence) {
+        scene.sources[0] = {
+            direction.primaryAngleDegrees,
+            direction.primaryElevationDegrees,
+            direction.confidence,
+            direction.uncertaintyDegrees,
+        };
+        scene.sourceCount = 1;
+        if (direction.secondaryAngleDegrees) {
+            scene.sources[1] = {
+                *direction.secondaryAngleDegrees,
+                direction.secondaryElevationDegrees.value_or(0.0f),
+                direction.secondaryConfidence,
+                direction.uncertaintyDegrees,
+            };
+            scene.sourceCount = 2;
+        }
+    }
+    PushScene(event, scene);
+}
+
+void HudOverlayRenderer::PushScene(const V4SoundEvent& event,
+                                   const DirectionSceneResult& direction) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_markers.push_back({event, direction, std::chrono::steady_clock::now()});
     if (m_markers.size() > 64) m_markers.erase(m_markers.begin());
@@ -392,27 +420,47 @@ void HudOverlayRenderer::Render() {
         // Keep uncertain but usable estimates visible instead of silently
         // dropping recognizer events.  Their lower opacity still communicates
         // that the bearing should be treated cautiously.
-        const float visibleConfidence = marker.direction.status == DirectionStatus::Estimated
-            ? std::max(0.25f, marker.direction.confidence)
-            : std::max(0.16f, marker.direction.confidence * 0.65f);
-        const float alpha = std::clamp(
-            settings.overlay.opacity * fade * visibleConfidence, 0.0f, 1.0f);
-        const ImVec4 color = marker.event.soundClass == SoundClass::Gunshot
-            ? ImVec4(1.0f, 0.30f, 0.22f, alpha)
-            : ImVec4(0.20f, 0.82f, 1.0f, alpha);
-        DrawArc(drawList, center, settings.overlay.radiusPixels,
-                marker.direction.primaryAngleDegrees,
-                std::clamp(marker.direction.uncertaintyDegrees, 6.0f, 35.0f),
-                ImGui::ColorConvertFloat4ToU32(color), settings.overlay.thicknessPixels);
-        if (settings.localization.showSecondaryDirection &&
-            marker.direction.secondaryAngleDegrees) {
-            ImVec4 secondary = color;
-            secondary.w *= 0.65f;
-            DrawArc(drawList, center, settings.overlay.radiusPixels,
-                    *marker.direction.secondaryAngleDegrees,
-                    std::clamp(marker.direction.uncertaintyDegrees, 6.0f, 35.0f),
-                    ImGui::ColorConvertFloat4ToU32(secondary),
-                    settings.overlay.thicknessPixels * 0.75f);
+        for (uint32_t sourceIndex = 0;
+             sourceIndex < std::min<uint32_t>(
+                 marker.direction.sourceCount,
+                 static_cast<uint32_t>(DirectionSceneResult::kMaximumSources));
+             ++sourceIndex) {
+            const DirectionSourceEstimate& source = marker.direction.sources[sourceIndex];
+            const float visibleConfidence = marker.direction.status == DirectionStatus::Estimated
+                ? std::max(0.25f, source.confidence)
+                : std::max(0.16f, source.confidence * 0.65f);
+            const float alpha = std::clamp(
+                settings.overlay.opacity * fade * visibleConfidence, 0.0f, 1.0f);
+            const ImVec4 color = marker.event.soundClass == SoundClass::Gunshot
+                ? ImVec4(1.0f, 0.30f, 0.22f, alpha)
+                : ImVec4(0.20f, 0.82f, 1.0f, alpha);
+            const ImVec2 sourceCenter{
+                center.x,
+                center.y - std::clamp(source.elevationDegrees, -60.0f, 60.0f) * 0.70f,
+            };
+            DrawArc(drawList, sourceCenter, settings.overlay.radiusPixels,
+                    source.azimuthDegrees,
+                    std::clamp(source.uncertaintyDegrees, 1.0f, 180.0f),
+                    ImGui::ColorConvertFloat4ToU32(color), settings.overlay.thicknessPixels);
+
+            const float radians = (source.azimuthDegrees - 90.0f) *
+                3.14159265358979323846f / 180.0f;
+            const ImVec2 point{
+                sourceCenter.x + std::cos(radians) * settings.overlay.radiusPixels,
+                sourceCenter.y + std::sin(radians) * settings.overlay.radiusPixels,
+            };
+            const ImU32 packed = ImGui::ColorConvertFloat4ToU32(color);
+            if (std::abs(source.elevationDegrees) >= 4.0f) {
+                const float sign = source.elevationDegrees > 0.0f ? -1.0f : 1.0f;
+                drawList->AddTriangleFilled(
+                    ImVec2(point.x, point.y + sign * 4.0f),
+                    ImVec2(point.x - 5.0f, point.y - sign * 4.0f),
+                    ImVec2(point.x + 5.0f, point.y - sign * 4.0f), packed);
+            }
+            char elevationText[24]{};
+            std::snprintf(elevationText, sizeof(elevationText), "%+.0f deg",
+                          source.elevationDegrees);
+            drawList->AddText(ImVec2(point.x + 8.0f, point.y - 7.0f), packed, elevationText);
         }
     }
     if (settings.overlay.showCenterDot) {

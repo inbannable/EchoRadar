@@ -107,6 +107,10 @@ int main(int argc, char* argv[]) {
         } else if (argument == "--model" && index + 1 < argc) {
             config.modelDirectory = argv[++index];
             modelWasExplicit = true;
+        } else if (argument == "--direction-model" && index + 1 < argc) {
+            config.directionModelDirectory = argv[++index];
+        } else if (argument == "--legacy-direction-diagnostic") {
+            config.legacyDirectionDiagnostic = true;
         } else if (argument == "--settings" && index + 1 < argc) {
             config.settingsPath = argv[++index];
         } else if (argument == "--no-overlay") {
@@ -117,6 +121,9 @@ int main(int argc, char* argv[]) {
                 << "  --list-audio-outputs       List render endpoints for loopback\n"
                 << "  --audio-output-id <id>     Pin capture to one render endpoint\n"
                 << "  --model <package-dir>      Load an experimental V4 package\n"
+                << "  --direction-model <dir>    Load the scene-level 3D direction package\n"
+                << "  --legacy-direction-diagnostic\n"
+                << "                              Explicitly run the old single-source mapper\n"
                 << "  --settings <json>          Override the per-user settings path\n"
                 << "  --no-overlay               Do not initialize the V4 event chart UI\n";
             return 0;
@@ -129,11 +136,23 @@ int main(int argc, char* argv[]) {
         PrintOutputs();
         return 0;
     }
+    if (!config.directionModelDirectory.empty() && config.legacyDirectionDiagnostic) {
+        std::cerr << "--direction-model and --legacy-direction-diagnostic are mutually exclusive\n";
+        return 2;
+    }
 
     if (!modelWasExplicit) config.modelDirectory = ResolveDefaultModelDirectory(argv[0]);
 
     std::cout << "=== EchoRadar experimental V4 ===\n";
     std::cout << "[EchoRadar] V4 model package: " << config.modelDirectory.string() << '\n';
+    if (!config.directionModelDirectory.empty()) {
+        std::cout << "[EchoRadar] Direction model package: "
+                  << config.directionModelDirectory.string() << '\n';
+    } else if (config.legacyDirectionDiagnostic) {
+        std::cout << "[EchoRadar] Legacy single-source direction diagnostic enabled\n";
+    } else {
+        std::cout << "[EchoRadar] Direction inference disabled (use --direction-model)\n";
+    }
     EchoRadar::EchoRadarApp app(config);
     g_app = &app;
     std::signal(SIGINT, OnSignal);

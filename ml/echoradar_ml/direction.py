@@ -555,3 +555,54 @@ def _apply_corpus_condition(clean: np.ndarray, condition: str,
         result[:, 1] = 0.9 * mixed[:, 1] + 0.1 * mixed[:, 0]
         return result
     raise ValueError(f"unsupported direction corpus condition: {condition}")
+
+
+# Multi-source direction APIs intentionally live in focused modules so this
+# legacy single-source calibration reference remains stable.  Re-exporting
+# them here keeps ``echoradar_ml.direction`` the public direction entrypoint.
+from .direction_scenes import (  # noqa: E402,F401
+    CLOSE_SOURCE_MAXIMUM_DEGREES,
+    DIRECTION_JOIN_MILLISECONDS,
+    DIRECTION_PRE_ANCHOR_MILLISECONDS,
+    DIRECTION_SCENE_FRAMES,
+    DIRECTION_SCENE_MILLISECONDS,
+    DIRECTION_REAL_SCENE_SCHEMA,
+    DIRECTION_SCENE_SAMPLES,
+    DIRECTION_SCENE_SCHEMA,
+    FULL_DIRECTION_COUNTS,
+    MINIMUM_SOURCE_SEPARATION_DEGREES,
+    SMOKE_DIRECTION_COUNTS,
+    DirectionSceneDistractor,
+    DirectionSceneRow,
+    DirectionSceneSource,
+    SceneDirection,
+    generate_direction_mixtures,
+    generate_direction_scene,
+    great_circle_degrees,
+    load_direction_scene_rows,
+    sample_scene_directions,
+    target_class_schedule,
+    target_count_schedule,
+)
+from .direction_training import (  # noqa: E402,F401
+    DIRECTION_CACHE_VERSION,
+    DIRECTION_OUTPUT_SHAPE,
+    DIRECTION_PACKAGE_VERSION,
+    DIRECTION_PREPROCESSING_VERSION,
+    DIRECTION_TRACK_COUNT,
+    DirectionMetrics,
+    PredictedDirection,
+    build_direction_model,
+    calibrate_direction_policy,
+    check_direction_parity,
+    classwise_adpit_mse,
+    decode_multi_accdoa,
+    direction_vector,
+    evaluate_direction_outputs,
+    evaluate_direction_package,
+    load_direction_package,
+    prepare_direction_cache,
+    scene_target_tensor,
+    train_direction_model,
+    vector_direction,
+)
