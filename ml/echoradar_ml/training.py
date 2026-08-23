@@ -238,6 +238,20 @@ class CachedWindowDataset:
     def __len__(self) -> int:
         return len(self.index)
 
+    def close(self) -> None:
+        arrays = tuple(self._arrays.values())
+        self._arrays.clear()
+        for array in arrays:
+            mapping = getattr(array, "_mmap", None)
+            if mapping is not None:
+                mapping.close()
+
+    def __enter__(self) -> CachedWindowDataset:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
     def _load(self, path: Path) -> np.ndarray:
         if path not in self._arrays:
             self._arrays[path] = np.load(path, mmap_mode="r", allow_pickle=False)

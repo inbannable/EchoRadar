@@ -84,6 +84,7 @@ TEST(AppSettings, MigratesSchemaTwoAndLeavesCalibrationDataUntouched) {
         std::ofstream output(calibration);
         output << "sentinel calibration data\n";
     }
+    const std::string calibrationBefore = ReadText(calibration);
 
     AppSettings loaded;
     std::string error;
@@ -97,7 +98,7 @@ TEST(AppSettings, MigratesSchemaTwoAndLeavesCalibrationDataUntouched) {
     EXPECT_FLOAT_EQ(loaded.uiScale, 1.4f);
 
     ASSERT_TRUE(AppSettingsFile::Save(path, loaded, &error)) << error;
-    EXPECT_EQ(ReadText(calibration), "sentinel calibration data\n");
+    EXPECT_EQ(ReadText(calibration), calibrationBefore);
     const std::string migrated = ReadText(path);
     EXPECT_NE(migrated.find("\"schema_version\": 3"), std::string::npos);
     EXPECT_EQ(migrated.find("localization_sample_ms"), std::string::npos);

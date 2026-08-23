@@ -14,5 +14,11 @@ target_link_libraries(echoradar_tests PRIVATE
     echoradar_settings
     GTest::gtest_main
 )
+if(WIN32 AND ECHORADAR_ENABLE_ONNX)
+    add_custom_command(TARGET echoradar_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ECHORADAR_ONNXRUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:echoradar_tests>/onnxruntime.dll")
+endif()
 include(GoogleTest)
 gtest_discover_tests(echoradar_tests)

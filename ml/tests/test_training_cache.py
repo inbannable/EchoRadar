@@ -21,13 +21,13 @@ class TrainingCacheTest(unittest.TestCase):
                 '"source_hint":"remote","reviewed":true}\n', encoding="utf-8"
             )
             records = prepare_feature_cache([prefix], root / "cache", (0.0,), stride_frames=20)
-            dataset = CachedWindowDataset(records)
-            self.assertGreater(len(dataset.positive_indices), 0)
-            self.assertGreater(len(dataset.negative_indices), 0)
-            values, onset, source = dataset[dataset.positive_indices[0]]
-            self.assertEqual(values.shape, (5, 128, 64))
-            self.assertEqual(onset.shape, (2,))
-            self.assertEqual(source.shape, (2,))
+            with CachedWindowDataset(records) as dataset:
+                self.assertGreater(len(dataset.positive_indices), 0)
+                self.assertGreater(len(dataset.negative_indices), 0)
+                values, onset, source = dataset[dataset.positive_indices[0]]
+                self.assertEqual(values.shape, (5, 128, 64))
+                self.assertEqual(onset.shape, (2,))
+                self.assertEqual(source.shape, (2,))
 
 
 if __name__ == "__main__":

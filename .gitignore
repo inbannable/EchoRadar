@@ -31,6 +31,7 @@ _deps/
 # Local audio and generated corpora
 sounds/
 recordings/
+pilot-datasets/
 
 # Model files
 model.bin

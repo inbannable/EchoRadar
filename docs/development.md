@@ -4,6 +4,8 @@
 
 The application and audio monitor build only on Windows 10/11 x64. Non-Windows hosts build the supported libraries and can run the C++ and Python regression suites. CMake 3.20+ and a C++20 compiler are required. The first configure needs network access for pinned kissfft and miniaudio sources, plus ImGui on Windows application builds.
 
+On Windows, run the CMake commands below from a Visual Studio Developer PowerShell or Developer Command Prompt so the MSVC and Windows SDK include paths are available. A regular shell is also suitable when using a Visual Studio CMake generator explicitly.
+
 The main options are:
 
 - `ECHORADAR_BUILD_APP=ON`: build `EchoRadar` on Windows.
