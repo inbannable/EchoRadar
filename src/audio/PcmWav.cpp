@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <limits>
 
@@ -44,6 +45,33 @@ bool Fail(std::string* error, const std::string& message) {
     return false;
 }
 
+constexpr std::array<unsigned char, 16> kPcmSubformatGuid{
+    0x01, 0x00, 0x00, 0x00,
+    0x00, 0x00,
+    0x10, 0x00,
+    0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+};
+
+uint32_t DefaultChannelMask(uint16_t channels) {
+    switch (channels) {
+    case 1: return WindowsSpeaker::FrontCenter;
+    case 2: return WindowsSpeaker::Stereo;
+    case 6: return WindowsSpeaker::Surround51Side;
+    case 8: return WindowsSpeaker::Surround71;
+    default: return 0;
+    }
+}
+
+bool IsSupportedPcmLayout(uint16_t channels, uint32_t channelMask) {
+    if (channels == 1) {
+        return channelMask == 0 || channelMask == WindowsSpeaker::FrontCenter;
+    }
+    if (channels == 2) {
+        return channelMask == 0 || channelMask == WindowsSpeaker::Stereo;
+    }
+    return IsValidWindowsSpeakerMask(channels, channelMask);
+}
+
 } // namespace
 
 bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* error) {
@@ -64,6 +92,7 @@ bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* e
     uint16_t bitDepth = 0;
     uint16_t blockAlign = 0;
     uint32_t sampleRate = 0;
+    uint32_t channelMask = 0;
     std::vector<unsigned char> data;
 
     while (in && (format == 0 || data.empty())) {
@@ -85,6 +114,19 @@ bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* e
             sampleRate = ReadLe32(fmt.data() + 4);
             blockAlign = ReadLe16(fmt.data() + 12);
             bitDepth = ReadLe16(fmt.data() + 14);
+            if (format == 0xfffeu) {
+                if (fmt.size() < 40 || ReadLe16(fmt.data() + 16) < 22u) {
+                    return Fail(error, "Truncated WAVEFORMATEXTENSIBLE fmt chunk");
+                }
+                const uint16_t validBits = ReadLe16(fmt.data() + 18);
+                channelMask = ReadLe32(fmt.data() + 20);
+                if ((validBits != 0 && validBits != bitDepth) ||
+                    !std::equal(kPcmSubformatGuid.begin(), kPcmSubformatGuid.end(),
+                                fmt.begin() + 24)) {
+                    return Fail(error, "Only integer PCM WAVEFORMATEXTENSIBLE is supported");
+                }
+                format = 1;
+            }
         } else if (id == "data") {
             data.resize(chunkSize);
             in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
@@ -98,7 +140,9 @@ bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* e
     }
 
     if (format != 1) return Fail(error, "Only integer PCM WAV is supported");
-    if (channels != 1 && channels != 2) return Fail(error, "Only mono/stereo WAV is supported");
+    if (!IsSupportedPcmLayout(channels, channelMask)) {
+        return Fail(error, "Unsupported WAV channel layout");
+    }
     if (bitDepth != 8 && bitDepth != 16) return Fail(error, "Only PCM8/PCM16 WAV is supported");
     if (sampleRate == 0) return Fail(error, "WAV sample rate is zero");
     const uint16_t expectedAlign = static_cast<uint16_t>(channels * (bitDepth / 8u));
@@ -109,6 +153,7 @@ bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* e
     const size_t sampleCount = data.size() / (bitDepth / 8u);
     out.sampleRate = sampleRate;
     out.channels = channels;
+    out.channelMask = channelMask;
     out.interleaved.resize(sampleCount);
     if (bitDepth == 8) {
         for (size_t i = 0; i < sampleCount; ++i) {
@@ -125,14 +170,19 @@ bool LoadPcmWav(const std::filesystem::path& path, PcmAudio& out, std::string* e
 }
 
 bool WritePcm16Wav(const std::filesystem::path& path, const PcmAudio& audio, std::string* error) {
-    if (audio.sampleRate == 0 || (audio.channels != 1 && audio.channels != 2)) {
+    const uint32_t channelMask = audio.channelMask != 0
+        ? audio.channelMask
+        : DefaultChannelMask(audio.channels);
+    if (audio.sampleRate == 0 || !IsSupportedPcmLayout(audio.channels, channelMask)) {
         return Fail(error, "Invalid audio format for WAV output");
     }
     if (audio.interleaved.size() % audio.channels != 0) {
         return Fail(error, "Interleaved sample count is not channel-aligned");
     }
     const uint64_t dataBytes64 = static_cast<uint64_t>(audio.interleaved.size()) * 2ull;
-    if (dataBytes64 > std::numeric_limits<uint32_t>::max() - 36u) {
+    const bool useExtensible = audio.channels > 2 || audio.channelMask != 0;
+    const uint32_t riffOverhead = useExtensible ? 60u : 36u;
+    if (dataBytes64 > std::numeric_limits<uint32_t>::max() - riffOverhead) {
         return Fail(error, "WAV is too large for RIFF");
     }
     std::ofstream out(path, std::ios::binary);
@@ -141,15 +191,22 @@ bool WritePcm16Wav(const std::filesystem::path& path, const PcmAudio& audio, std
     const uint32_t dataBytes = static_cast<uint32_t>(dataBytes64);
     const uint16_t blockAlign = static_cast<uint16_t>(audio.channels * 2u);
     out.write("RIFF", 4);
-    WriteLe32(out, 36u + dataBytes);
+    WriteLe32(out, riffOverhead + dataBytes);
     out.write("WAVEfmt ", 8);
-    WriteLe32(out, 16u);
-    WriteLe16(out, 1u);
+    WriteLe32(out, useExtensible ? 40u : 16u);
+    WriteLe16(out, useExtensible ? 0xfffeu : 1u);
     WriteLe16(out, audio.channels);
     WriteLe32(out, audio.sampleRate);
     WriteLe32(out, audio.sampleRate * blockAlign);
     WriteLe16(out, blockAlign);
     WriteLe16(out, 16u);
+    if (useExtensible) {
+        WriteLe16(out, 22u);
+        WriteLe16(out, 16u);
+        WriteLe32(out, channelMask);
+        out.write(reinterpret_cast<const char*>(kPcmSubformatGuid.data()),
+                  static_cast<std::streamsize>(kPcmSubformatGuid.size()));
+    }
     out.write("data", 4);
     WriteLe32(out, dataBytes);
     for (const float sample : audio.interleaved) {
@@ -174,6 +231,7 @@ PcmAudio ResampleLinear(const PcmAudio& source, uint32_t targetSampleRate) {
     PcmAudio out;
     out.sampleRate = targetSampleRate;
     out.channels = source.channels;
+    out.channelMask = source.channelMask;
     out.interleaved.resize(targetFrames * out.channels);
     const double scale = static_cast<double>(source.sampleRate) / targetSampleRate;
     for (size_t frame = 0; frame < targetFrames; ++frame) {
@@ -191,15 +249,34 @@ PcmAudio ResampleLinear(const PcmAudio& source, uint32_t targetSampleRate) {
 }
 
 PcmAudio ConvertToStereo48k(const PcmAudio& source) {
+    if (source.channels == 0 || source.sampleRate == 0 ||
+        source.interleaved.size() % source.channels != 0) {
+        return {};
+    }
+
     PcmAudio stereo;
     stereo.sampleRate = source.sampleRate;
     stereo.channels = 2;
     stereo.interleaved.resize(source.FrameCount() * 2);
-    for (size_t frame = 0; frame < source.FrameCount(); ++frame) {
-        const float left = source.interleaved[frame * source.channels];
-        const float right = source.channels == 2 ? source.interleaved[frame * 2 + 1] : left;
-        stereo.interleaved[frame * 2] = left;
-        stereo.interleaved[frame * 2 + 1] = right;
+
+    if (source.channels == 1 || source.channels == 2) {
+        for (size_t frame = 0; frame < source.FrameCount(); ++frame) {
+            const float left = source.interleaved[frame * source.channels];
+            const float right = source.channels == 2
+                ? source.interleaved[frame * 2 + 1]
+                : left;
+            stereo.interleaved[frame * 2] = left;
+            stereo.interleaved[frame * 2 + 1] = right;
+        }
+    } else {
+        const uint32_t mask = source.channelMask != 0
+            ? source.channelMask
+            : DefaultChannelMask(source.channels);
+        const auto layout = MakeAudioChannelLayout(source.channels, mask);
+        if (!layout || !DownmixForRecognition(source.interleaved, source.FrameCount(),
+                                              *layout, stereo.interleaved)) {
+            return {};
+        }
     }
     return ResampleLinear(stereo, 48000);
 }

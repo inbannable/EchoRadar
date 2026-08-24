@@ -5,13 +5,15 @@
 
 namespace EchoRadar {
 
-/// Circular PCM cache for recent stereo interleaved float frames.
+/// Circular PCM cache for recent interleaved float frames.
 /// Designed for single-thread push/extract in the DSP pipeline.
 class AudioHistoryBuffer {
 public:
-    static constexpr size_t kChannels = 2;
+    static constexpr size_t kChannels = 2; ///< Legacy stereo default.
 
-    explicit AudioHistoryBuffer(size_t capacityFrames = 48000 * 3, uint32_t sampleRate = 48000);
+    explicit AudioHistoryBuffer(size_t capacityFrames = 48000 * 3,
+                                uint32_t sampleRate = 48000,
+                                size_t channelCount = kChannels);
 
     void Reset();
 
@@ -31,10 +33,12 @@ public:
     size_t   GetStoredFrames() const { return m_sizeFrames; }
     size_t   CapacityFrames() const { return m_capacityFrames; }
     uint32_t GetSampleRate() const { return m_sampleRate; }
+    size_t   GetChannelCount() const { return m_channelCount; }
 
 private:
     size_t m_capacityFrames{0};
     uint32_t m_sampleRate{48000};
+    size_t m_channelCount{kChannels};
     std::vector<float> m_data;
     size_t m_writePos{0};
     size_t m_sizeFrames{0};

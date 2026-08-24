@@ -1,0 +1,18 @@
+EchoRadar v2
+Copyright 2026 EchoRadar contributors
+
+EchoRadar v2 is research software implementing a multichannel,
+frequency-domain energy-vector direction display from publicly documented
+principles. It is an original implementation and does not contain ASUS code,
+assets, branding, or proprietary tuning. It does not claim bit-for-bit
+compatibility with ASUS Sonic Radar.
+
+The Apache License, Version 2.0 includes a patent license from contributors
+only. It does not grant rights under patents owned by third parties. Users and
+distributors are responsible for evaluating third-party patent rights,
+including United States Patent US 9,232,337 B2:
+https://patents.google.com/patent/US9232337B2/en
+
+Runtime dependencies retain their own notices and licenses. Model packages,
+training data, recorded audio, and generated datasets are not distributed as
+part of this source release unless explicitly stated.

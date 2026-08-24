@@ -1,4 +1,5 @@
 #include "AudioDeviceManager.h"
+#include "WasapiEndpointFormat.h"
 
 #include "miniaudio.h"
 
@@ -34,6 +35,36 @@ std::string Lower(std::string value) {
     return value;
 }
 
+uint32_t WindowsSpeakerBit(ma_channel channel) {
+    switch (channel) {
+    case MA_CHANNEL_MONO:
+    case MA_CHANNEL_FRONT_CENTER: return WindowsSpeaker::FrontCenter;
+    case MA_CHANNEL_FRONT_LEFT: return WindowsSpeaker::FrontLeft;
+    case MA_CHANNEL_FRONT_RIGHT: return WindowsSpeaker::FrontRight;
+    case MA_CHANNEL_LFE: return WindowsSpeaker::Lfe;
+    case MA_CHANNEL_BACK_LEFT: return WindowsSpeaker::BackLeft;
+    case MA_CHANNEL_BACK_RIGHT: return WindowsSpeaker::BackRight;
+    case MA_CHANNEL_SIDE_LEFT: return WindowsSpeaker::SideLeft;
+    case MA_CHANNEL_SIDE_RIGHT: return WindowsSpeaker::SideRight;
+    default: return 0;
+    }
+}
+
+uint32_t WindowsSpeakerMask(const ma_channel* channels, uint32_t channelCount) {
+    uint32_t mask = 0;
+    for (uint32_t index = 0; index < channelCount; ++index) {
+        const uint32_t bit = WindowsSpeakerBit(channels[index]);
+        if (bit == 0 || (mask & bit) != 0u) return 0;
+        mask |= bit;
+    }
+    return mask;
+}
+
+struct EnumeratedEndpoint {
+    ma_device_id nativeId{};
+    AudioDeviceInfo info;
+};
+
 } // namespace
 
 struct AudioDeviceManager::Impl {
@@ -45,23 +76,79 @@ struct AudioDeviceManager::Impl {
                                        const ma_device_info* nativeInfo,
                                        void* userData) {
         if (type != ma_device_type_playback) return MA_TRUE;
-        auto& outputs = *static_cast<std::vector<AudioDeviceInfo>*>(userData);
-        AudioDeviceInfo info;
-        info.id = FingerprintDeviceId(nativeInfo->id);
-        info.name = nativeInfo->name;
-        info.isDefault = nativeInfo->isDefault != 0;
-        if (nativeInfo->nativeDataFormatCount != 0) {
-            info.nativeChannels = nativeInfo->nativeDataFormats[0].channels;
-            info.nativeSampleRate = nativeInfo->nativeDataFormats[0].sampleRate;
-        }
-        outputs.push_back(std::move(info));
+        auto& outputs = *static_cast<std::vector<EnumeratedEndpoint>*>(userData);
+        EnumeratedEndpoint endpoint;
+        endpoint.nativeId = nativeInfo->id;
+        endpoint.info.id = FingerprintDeviceId(nativeInfo->id);
+        endpoint.info.name = nativeInfo->name;
+        endpoint.info.isDefault = nativeInfo->isDefault != 0;
+        outputs.push_back(std::move(endpoint));
         return MA_TRUE;
+    }
+
+    void Probe(EnumeratedEndpoint& endpoint) {
+#ifdef _WIN32
+        WasapiEndpointFormat endpointFormat;
+        if (QueryWasapiEndpointFormat(endpoint.nativeId.wasapi, endpointFormat)) {
+            endpoint.info.nativeChannels = endpointFormat.channelCount;
+            endpoint.info.nativeSampleRate = endpointFormat.sampleRate;
+            endpoint.info.nativeChannelMask = endpointFormat.channelMask;
+            if (const auto layout = MakeAudioChannelLayout(
+                    endpoint.info.nativeChannels,
+                    endpoint.info.nativeChannelMask)) {
+                endpoint.info.layout = *layout;
+            }
+            return;
+        }
+#endif
+
+        ma_device_config config = ma_device_config_init(ma_device_type_loopback);
+        config.capture.pDeviceID = &endpoint.nativeId;
+        config.capture.format = ma_format_f32;
+        config.capture.channels = 0;
+        config.sampleRate = 0;
+
+        ma_device probe{};
+        if (ma_device_init(&context, &config, &probe) == MA_SUCCESS) {
+            endpoint.info.nativeChannels = probe.capture.internalChannels;
+            endpoint.info.nativeSampleRate = probe.capture.internalSampleRate;
+            endpoint.info.nativeChannelMask = WindowsSpeakerMask(
+                probe.capture.internalChannelMap, probe.capture.internalChannels);
+            if (const auto layout = MakeAudioChannelLayout(
+                    endpoint.info.nativeChannels, endpoint.info.nativeChannelMask)) {
+                endpoint.info.layout = *layout;
+            }
+            ma_device_uninit(&probe);
+            return;
+        }
+
+        // A backend can refuse a non-started probe. Detailed device data still
+        // supplies useful count/rate metadata, though not a speaker mask.
+        ma_device_info details{};
+        if (ma_context_get_device_info(&context, ma_device_type_playback,
+                                       &endpoint.nativeId, &details) != MA_SUCCESS) {
+            return;
+        }
+        for (uint32_t index = 0; index < details.nativeDataFormatCount; ++index) {
+            const auto& format = details.nativeDataFormats[index];
+            if (endpoint.info.nativeChannels == 0 || format.sampleRate == 48000) {
+                endpoint.info.nativeChannels = format.channels;
+                endpoint.info.nativeSampleRate = format.sampleRate;
+            }
+            if (format.sampleRate == 48000) break;
+        }
     }
 
     void Enumerate() {
         outputDevices.clear();
         if (!initialized) return;
-        ma_context_enumerate_devices(&context, EnumerateCallback, &outputDevices);
+        std::vector<EnumeratedEndpoint> endpoints;
+        ma_context_enumerate_devices(&context, EnumerateCallback, &endpoints);
+        outputDevices.reserve(endpoints.size());
+        for (auto& endpoint : endpoints) {
+            Probe(endpoint);
+            outputDevices.push_back(std::move(endpoint.info));
+        }
         std::stable_sort(outputDevices.begin(), outputDevices.end(),
                          [](const AudioDeviceInfo& left, const AudioDeviceInfo& right) {
                              if (left.isDefault != right.isDefault) return left.isDefault;

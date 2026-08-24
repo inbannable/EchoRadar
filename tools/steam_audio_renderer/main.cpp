@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
     iplHRTFRelease(&hrtf);
     iplContextRelease(&context);
 
-    PcmAudio output{48000, 2, std::move(rendered)};
+    PcmAudio output{48000, 2, WindowsSpeaker::Stereo, std::move(rendered)};
     if (!WritePcm16Wav(options.output, output, &error)) {
         std::cerr << error << '\n';
         return 1;

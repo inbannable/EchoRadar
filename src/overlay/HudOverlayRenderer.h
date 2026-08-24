@@ -1,20 +1,19 @@
 #pragma once
 
-#include <direction/DirectionTypes.h>
-#include <recognition/RecognitionTypes.h>
-#include <settings/AppSettings.h>
+#include <ui/AppState.h>
 
-#include <chrono>
 #include <memory>
-#include <mutex>
-#include <vector>
+#include <string>
 
 namespace EchoRadar {
 
+/// Original EchoRadar v2 azimuth HUD. It consumes immutable snapshots, remains
+/// click-through in normal mode, and submits persisted drag updates in edit mode.
 class HudOverlayRenderer {
 public:
     struct Config {
-        std::shared_ptr<RuntimeSettingsStore> settings;
+        std::shared_ptr<LatestSnapshotPublisher> snapshots;
+        std::shared_ptr<UiCommandQueue> commands;
     };
 
     explicit HudOverlayRenderer(Config config);
@@ -23,25 +22,17 @@ public:
     bool Initialise();
     void Shutdown();
     void Render();
-    void PushScene(const SoundEvent& event,
-                   const DirectionSceneResult& direction);
     bool IsRunning() const { return m_running; }
 
     struct PlatformImpl;
 
 private:
-    struct Marker {
-        SoundEvent event;
-        DirectionSceneResult direction;
-        std::chrono::steady_clock::time_point created;
-    };
-
     Config m_config;
     bool m_running{false};
-    bool m_hotkeyHidden{false};
+    std::string m_reportedDisplayId;
+    HudRect m_reportedWorkArea{};
+    float m_reportedDpiScale{1.0f};
     std::unique_ptr<PlatformImpl> m_platform;
-    std::mutex m_mutex;
-    std::vector<Marker> m_markers;
 };
 
 } // namespace EchoRadar

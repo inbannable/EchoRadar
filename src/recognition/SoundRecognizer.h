@@ -91,6 +91,8 @@ private:
     uint64_t m_totalTraceCount{0};
     uint64_t m_nextPeakIndex{0};
     uint64_t m_latestTraceSample{0};
+    uint64_t m_sampleBase{0};
+    bool m_haveSampleBase{false};
     std::array<PendingCandidate, kSoundClassCount> m_pending{};
 
     std::array<double, 256> m_inferenceTimes{};

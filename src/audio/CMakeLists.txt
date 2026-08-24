@@ -10,15 +10,24 @@ add_library(echoradar_audio STATIC
     AudioRingBuffer.cpp
     AudioRingBuffer.h
     AudioStreamConsumer.h
+    AudioTypes.cpp
     AudioTypes.h
+    Pcm16WavWriter.cpp
+    Pcm16WavWriter.h
     PcmWav.cpp
     PcmWav.h
+    WasapiEndpointFormat.cpp
+    WasapiEndpointFormat.h
 )
 target_include_directories(echoradar_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(echoradar_audio PUBLIC miniaudio_iface)
 
 find_package(Threads REQUIRED)
 target_link_libraries(echoradar_audio PUBLIC Threads::Threads)
+
+if(WIN32)
+    target_link_libraries(echoradar_audio PUBLIC ole32)
+endif()
 
 if(APPLE)
     target_link_libraries(echoradar_audio PUBLIC

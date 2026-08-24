@@ -2,26 +2,18 @@
 
 ## Supported configurations
 
-The application and audio monitor build only on Windows 10/11 x64. Non-Windows hosts build the supported libraries and can run the C++ and Python regression suites. CMake 3.20+ and a C++20 compiler are required. The first configure needs network access for pinned kissfft and miniaudio sources, plus ImGui on Windows application builds.
+The application and audio monitor target Windows 10/11 x64. Portable audio,
+DSP, settings, state, and test libraries can be built on other hosts. CMake
+3.20+ and C++20 are required. The first configure fetches pinned dependencies.
 
-On Windows, run the CMake commands below from a Visual Studio Developer PowerShell or Developer Command Prompt so the MSVC and Windows SDK include paths are available. A regular shell is also suitable when using a Visual Studio CMake generator explicitly.
+Key options:
 
-The main options are:
-
-- `ECHORADAR_BUILD_APP=ON`: build `EchoRadar` on Windows.
-- `ECHORADAR_BUILD_AUDIO_MONITOR=ON`: build the Windows loopback monitor.
-- `ECHORADAR_ENABLE_ONNX=ON`: enable both recognition and direction inference.
-- `ECHORADAR_BUILD_TESTS=ON`: fetch GoogleTest and build retained tests.
-- `ECHORADAR_BUILD_STEAM_AUDIO_RENDERER=ON`: build the optional offline training renderer.
-
-## Library-only build
-
-```powershell
-cmake -S . -B build -DECHORADAR_BUILD_APP=OFF -DECHORADAR_BUILD_AUDIO_MONITOR=OFF
-cmake --build build --config Release
-```
-
-This configuration does not fetch GoogleTest. Enable tests explicitly:
+- `ECHORADAR_BUILD_APP=ON`: build `EchoRadarV2.exe` on Windows.
+- `ECHORADAR_BUILD_AUDIO_MONITOR=ON`: build the loopback monitor.
+- `ECHORADAR_ENABLE_ONNX=ON`: enable optional recognition/legacy direction
+  package inference.
+- `ECHORADAR_BUILD_TESTS=ON`: build the native regression suite.
+- `ECHORADAR_BUILD_STEAM_AUDIO_RENDERER=ON`: build the optional offline tool.
 
 ```powershell
 cmake -S . -B build-tests `
@@ -32,22 +24,32 @@ cmake --build build-tests --config Release
 ctest --test-dir build-tests -C Release --output-on-failure
 ```
 
-The retained native suite covers the SPSC audio ring, history buffer, streaming STFT, PCM WAV I/O, recognition package/features/peak policy, direction package/post-processing/scene grouping, and schema-2 settings migration.
-
 ## Source layout
 
 ```text
-src/app          Windows application orchestration
-src/audio        loopback capture, buffers, devices, PCM WAV
-src/dsp          streaming STFT
-src/recognition  current package, features, ONNX engine, recognizer
-src/direction    multi-source package, ONNX engine, scene coordinator
-src/settings     schema-3 runtime settings
-src/overlay      control UI and click-through HUD
-src/support      flat JSON and SHA-256 utilities
-tools            loopback monitor and optional offline renderer
-tests            active native regression suite
-ml               active offline training and evaluation pipeline
+src/app          runtime orchestration and schema-3 session logging
+src/audio        loopback capture, layouts, buffers, downmix, WAV
+src/dsp          shared FFT/window helpers
+src/radar        multichannel energy-vector radar
+src/recognition  unchanged stereo recognition package/runtime
+src/direction    retained direction-package compatibility
+src/settings     schema-4 settings and per-display HUD state
+src/ui           immutable snapshots and typed command queue
+src/overlay      single dashboard and in-game HUD
+src/support      JSON and hashing utilities
+tests            native regression suite
+ml               offline training and evaluation pipeline
 ```
 
-Do not change serialized tensor names, shapes, `package_version: 4`, or `stereo-onset-v4` while making source-level refactors. Endpoint discontinuities must reset recognition, audio history, and pending direction scenes together.
+Do not change serialized recognition/direction tensor names, shapes, package
+versions, or preprocessing identifiers as part of radar work. Do not allocate,
+lock, log, or perform inference from the audio callback. Discontinuities must
+reset all timeline-dependent state together.
+
+## Release checklist
+
+Run the native and Python suites, then complete the real-device and visual
+matrix in [evaluation.md](evaluation.md). Verify the frozen v1 branch
+independently. A `v2.0.0-research` release must include `LICENSE`, `NOTICE`,
+algorithm provenance, raw evaluation results, known limitations, and hashes for
+published binaries.

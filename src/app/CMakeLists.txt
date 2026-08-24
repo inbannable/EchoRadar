@@ -1,26 +1,29 @@
-add_executable(EchoRadar
+add_executable(EchoRadarV2
     main.cpp
     EchoRadarApp.cpp
     EchoRadarApp.h
+    SessionLog.cpp
+    SessionLog.h
 )
-target_include_directories(EchoRadar PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
-target_link_libraries(EchoRadar PRIVATE
+target_include_directories(EchoRadarV2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(EchoRadarV2 PRIVATE
     echoradar_audio
     echoradar_recognition
-    echoradar_direction
+    echoradar_radar
     echoradar_settings
+    echoradar_ui
     echoradar_overlay
 )
 
 if(ECHORADAR_ENABLE_ONNX)
-    add_custom_command(TARGET EchoRadar POST_BUILD
+    add_custom_command(TARGET EchoRadarV2 POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ECHORADAR_ONNXRUNTIME_DLL}"
-            "$<TARGET_FILE_DIR:EchoRadar>/onnxruntime.dll")
+            "$<TARGET_FILE_DIR:EchoRadarV2>/onnxruntime.dll")
 endif()
 
 if(MSVC)
-    target_compile_options(EchoRadar PRIVATE /W4)
+    target_compile_options(EchoRadarV2 PRIVATE /W4)
 else()
-    target_compile_options(EchoRadar PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(EchoRadarV2 PRIVATE -Wall -Wextra -Wpedantic)
 endif()
