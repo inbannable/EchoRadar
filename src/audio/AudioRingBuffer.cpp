@@ -7,11 +7,19 @@
 namespace EchoRadar {
 
 AudioRingBuffer::AudioRingBuffer(size_t capacityFrames)
+    : AudioRingBuffer(capacityFrames, kChannels) {
+}
+
+AudioRingBuffer::AudioRingBuffer(size_t capacityFrames, size_t channelCount)
     // Minimum two slots so the mask is never zero.
     : m_capacityFrames(std::bit_ceil(std::max(capacityFrames, size_t{2})))
     , m_mask(m_capacityFrames - 1)
-    , m_data(m_capacityFrames * kChannels, 0.f)
+    , m_channelCount(channelCount)
+    , m_data(m_capacityFrames * channelCount, 0.f)
 {
+    if (channelCount != 2 && channelCount != 6 && channelCount != 8) {
+        throw std::invalid_argument("AudioRingBuffer channelCount must be 2, 6, or 8");
+    }
 }
 
 size_t AudioRingBuffer::PushInterleaved(const float* src, size_t frameCount) {
@@ -27,14 +35,14 @@ size_t AudioRingBuffer::PushInterleaved(const float* src, size_t frameCount) {
     const size_t contig = m_capacityFrames - slot; // contiguous slots before wrap
 
     const size_t first = std::min(n, contig);
-    std::memcpy(m_data.data() + slot * kChannels,
+    std::memcpy(m_data.data() + slot * m_channelCount,
                 src,
-                first * kChannels * sizeof(float));
+                first * m_channelCount * sizeof(float));
 
     if (first < n) {
         std::memcpy(m_data.data(),
-                    src + first * kChannels,
-                    (n - first) * kChannels * sizeof(float));
+                    src + first * m_channelCount,
+                    (n - first) * m_channelCount * sizeof(float));
     }
 
     // Release store — makes written data visible to consumer.
@@ -56,13 +64,13 @@ size_t AudioRingBuffer::PopInterleaved(float* dst, size_t frameCount) {
 
     const size_t first = std::min(n, contig);
     std::memcpy(dst,
-                m_data.data() + slot * kChannels,
-                first * kChannels * sizeof(float));
+                m_data.data() + slot * m_channelCount,
+                first * m_channelCount * sizeof(float));
 
     if (first < n) {
-        std::memcpy(dst + first * kChannels,
+        std::memcpy(dst + first * m_channelCount,
                     m_data.data(),
-                    (n - first) * kChannels * sizeof(float));
+                    (n - first) * m_channelCount * sizeof(float));
     }
 
     // Release store — makes consumed slots visible to producer.

@@ -4,6 +4,7 @@
 
 #include <csignal>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <system_error>
@@ -71,9 +72,7 @@ std::filesystem::path ResolveDefaultModelDirectory(
             std::filesystem::weakly_canonical(candidate, error);
         return error ? candidate : normalized;
     }
-    return workingDirectory.empty()
-        ? std::filesystem::path("models/recognition-candidate")
-        : workingDirectory / "models" / "recognition-candidate";
+    return {};
 }
 
 void PrintOutputs() {
@@ -85,7 +84,15 @@ void PrintOutputs() {
         if (output.isDefault) std::cout << "  <default>";
         if (output.nativeChannels != 0) {
             std::cout << "  " << output.nativeChannels
-                      << "ch@" << output.nativeSampleRate;
+                      << "ch@" << output.nativeSampleRate
+                      << "  " << EchoRadar::ToString(output.layout.kind)
+                      << "  mask=0x" << std::hex << output.nativeChannelMask
+                      << std::dec << "  [";
+            for (uint32_t index = 0; index < output.layout.channelCount; ++index) {
+                if (index != 0) std::cout << ',';
+                std::cout << EchoRadar::ToString(output.layout.roles[index]);
+            }
+            std::cout << ']';
         }
         std::cout << '\n';
     }
@@ -115,20 +122,44 @@ int main(int argc, char* argv[]) {
         } else if (argument == "--model" && index + 1 < argc) {
             config.modelDirectory = argv[++index];
             modelWasExplicit = true;
-        } else if (argument == "--direction-model" &&
-                   index + 1 < argc) {
-            config.directionModelDirectory = argv[++index];
+        } else if (argument == "--radar-mode" && index + 1 < argc) {
+            const std::string value(argv[++index]);
+            if (value == "continuous") {
+                config.radarMode = EchoRadar::RadarMode::Continuous;
+            } else if (value == "events") {
+                config.radarMode = EchoRadar::RadarMode::Events;
+            } else if (value == "combined") {
+                config.radarMode = EchoRadar::RadarMode::Combined;
+            } else {
+                std::cerr << "--radar-mode must be continuous, events, or combined\n";
+                return 2;
+            }
+        } else if (argument == "--radar-preset" && index + 1 < argc) {
+            const std::string value(argv[++index]);
+            if (value == "all") {
+                config.radarPreset = EchoRadar::RadarPreset::All;
+            } else if (value == "footsteps") {
+                config.radarPreset = EchoRadar::RadarPreset::Footsteps;
+            } else if (value == "gunshots") {
+                config.radarPreset = EchoRadar::RadarPreset::Gunshots;
+            } else if (value == "custom") {
+                config.radarPreset = EchoRadar::RadarPreset::Custom;
+            } else {
+                std::cerr << "--radar-preset must be all, footsteps, gunshots, or custom\n";
+                return 2;
+            }
         } else if (argument == "--settings" && index + 1 < argc) {
             config.settingsPath = argv[++index];
         } else if (argument == "--no-overlay") {
             config.showOverlay = false;
         } else if (argument == "--help" || argument == "-h") {
             std::cout
-                << "Usage: EchoRadar [options]\n\n"
+                << "Usage: EchoRadarV2 [options]\n\n"
                 << "  --list-audio-outputs       List render endpoints for loopback\n"
                 << "  --audio-output-id <id>     Pin capture to one render endpoint\n"
-                << "  --model <package-dir>      Load the recognition package\n"
-                << "  --direction-model <dir>    Load the multi-source direction package\n"
+                << "  --radar-mode <mode>        continuous, events, or combined\n"
+                << "  --radar-preset <preset>    all, footsteps, gunshots, or custom\n"
+                << "  --model <package-dir>      Optional recognition trigger package\n"
                 << "  --settings <json>          Override the per-user settings path\n"
                 << "  --no-overlay               Run without the control UI or HUD\n";
             return 0;
@@ -148,15 +179,12 @@ int main(int argc, char* argv[]) {
             ResolveDefaultModelDirectory(argv[0]);
     }
 
-    std::cout << "=== EchoRadar ===\n";
-    std::cout << "[EchoRadar] Recognition package: "
-              << config.modelDirectory.string() << '\n';
-    if (!config.directionModelDirectory.empty()) {
-        std::cout << "[EchoRadar] Direction package: "
-                  << config.directionModelDirectory.string() << '\n';
+    std::cout << "=== EchoRadar v2 multichannel research build ===\n";
+    if (!config.modelDirectory.empty()) {
+        std::cout << "[EchoRadar] Recognition package: "
+                  << config.modelDirectory.string() << '\n';
     } else {
-        std::cout << "[EchoRadar] Direction inference disabled "
-                     "(use --direction-model)\n";
+        std::cout << "[EchoRadar] Recognition disabled; continuous radar needs no model\n";
     }
 
     EchoRadar::EchoRadarApp app(config);

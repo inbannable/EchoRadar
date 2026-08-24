@@ -6,12 +6,18 @@
 
 namespace EchoRadar {
 
-AudioHistoryBuffer::AudioHistoryBuffer(size_t capacityFrames, uint32_t sampleRate)
+AudioHistoryBuffer::AudioHistoryBuffer(size_t capacityFrames,
+                                       uint32_t sampleRate,
+                                       size_t channelCount)
     : m_capacityFrames(std::max<size_t>(2, capacityFrames))
     , m_sampleRate(sampleRate)
-    , m_data(m_capacityFrames * kChannels, 0.0f) {
+    , m_channelCount(channelCount)
+    , m_data(m_capacityFrames * channelCount, 0.0f) {
     if (m_sampleRate == 0) {
         throw std::invalid_argument("AudioHistoryBuffer sampleRate must be > 0");
+    }
+    if (channelCount != 2 && channelCount != 6 && channelCount != 8) {
+        throw std::invalid_argument("AudioHistoryBuffer channelCount must be 2, 6, or 8");
     }
 }
 
@@ -44,8 +50,8 @@ void AudioHistoryBuffer::PushInterleaved(const float* src, size_t frameCount, ui
         const size_t keep = m_capacityFrames;
         const uint64_t keptStartSample = startSample + static_cast<uint64_t>(frameCount - keep);
         std::memcpy(m_data.data(),
-                    src + ((frameCount - keep) * kChannels),
-                    keep * kChannels * sizeof(float));
+                    src + ((frameCount - keep) * m_channelCount),
+                    keep * m_channelCount * sizeof(float));
         m_writePos = 0;
         m_sizeFrames = keep;
         m_startSample = keptStartSample;
@@ -59,14 +65,14 @@ void AudioHistoryBuffer::PushInterleaved(const float* src, size_t frameCount, ui
     }
 
     const size_t first = std::min(frameCount, m_capacityFrames - m_writePos);
-    std::memcpy(m_data.data() + (m_writePos * kChannels),
+    std::memcpy(m_data.data() + (m_writePos * m_channelCount),
                 src,
-                first * kChannels * sizeof(float));
+                first * m_channelCount * sizeof(float));
 
     if (first < frameCount) {
         std::memcpy(m_data.data(),
-                    src + (first * kChannels),
-                    (frameCount - first) * kChannels * sizeof(float));
+                    src + (first * m_channelCount),
+                    (frameCount - first) * m_channelCount * sizeof(float));
     }
 
     m_writePos = (m_writePos + frameCount) % m_capacityFrames;
@@ -90,16 +96,16 @@ bool AudioHistoryBuffer::ExtractWindow(uint64_t startSample,
 
     const uint64_t offsetFrames = startSample - oldest;
     const size_t startSlot = (OldestSlot() + static_cast<size_t>(offsetFrames)) % m_capacityFrames;
-    outInterleaved.resize(frameCount * kChannels);
+    outInterleaved.resize(frameCount * m_channelCount);
 
     const size_t first = std::min(frameCount, m_capacityFrames - startSlot);
     std::memcpy(outInterleaved.data(),
-                m_data.data() + (startSlot * kChannels),
-                first * kChannels * sizeof(float));
+                m_data.data() + (startSlot * m_channelCount),
+                first * m_channelCount * sizeof(float));
     if (first < frameCount) {
-        std::memcpy(outInterleaved.data() + (first * kChannels),
+        std::memcpy(outInterleaved.data() + (first * m_channelCount),
                     m_data.data(),
-                    (frameCount - first) * kChannels * sizeof(float));
+                    (frameCount - first) * m_channelCount * sizeof(float));
     }
     return true;
 }

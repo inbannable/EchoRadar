@@ -7,9 +7,9 @@ add_library(echoradar_overlay STATIC
 target_include_directories(echoradar_overlay PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(echoradar_overlay PUBLIC
     echoradar_audio
-    echoradar_recognition
-    echoradar_direction
+    echoradar_radar
     echoradar_settings
+    echoradar_ui
     imgui_dx11
     dcomp
     dxgi

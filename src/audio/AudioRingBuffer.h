@@ -5,10 +5,9 @@
 
 namespace EchoRadar {
 
-/// Lock-free single-producer / single-consumer ring buffer for stereo float32 PCM.
+/// Lock-free single-producer / single-consumer ring buffer for float32 PCM.
 ///
-/// Memory layout per slot: [ L, R ]  (interleaved)
-/// One "frame" = one stereo sample pair = 2 floats = 8 bytes.
+/// Memory layout per slot is interleaved and may contain 2, 6, or 8 channels.
 /// Capacity is rounded up to the next power-of-two for fast wrap-around via bitmask.
 ///
 /// Thread-safety contract:
@@ -19,10 +18,11 @@ namespace EchoRadar {
 /// Overflow policy: new frames are silently dropped when full (callback-safe; never blocks).
 class AudioRingBuffer {
 public:
-    static constexpr size_t kChannels = 2; ///< Stereo (L, R)
+    static constexpr size_t kChannels = 2; ///< Legacy stereo default.
 
     /// @param capacityFrames  Minimum number of frames; rounded up to next power-of-two.
     explicit AudioRingBuffer(size_t capacityFrames);
+    AudioRingBuffer(size_t capacityFrames, size_t channelCount);
 
     AudioRingBuffer(const AudioRingBuffer&)            = delete;
     AudioRingBuffer& operator=(const AudioRingBuffer&) = delete;
@@ -46,11 +46,13 @@ public:
     void Clear();
 
     size_t CapacityFrames() const { return m_capacityFrames; }
+    size_t ChannelCount() const { return m_channelCount; }
 
 private:
     size_t                          m_capacityFrames; ///< always a power-of-two
     size_t                          m_mask;           ///< m_capacityFrames - 1
-    std::vector<float>              m_data;           ///< m_capacityFrames * kChannels floats
+    size_t                          m_channelCount{2};
+    std::vector<float>              m_data;
 
     // Cache-line separated to avoid false sharing between producer and consumer.
     alignas(64) std::atomic<size_t> m_writeIdx{0};   ///< owned by producer

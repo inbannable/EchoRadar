@@ -271,6 +271,29 @@ TEST(SoundRecognizer, FlushSupportsZeroLookaheadAndCarriesStreamGeneration) {
     EXPECT_EQ(events[0].streamGeneration, 42u);
 }
 
+TEST(SoundRecognizer, OnAudioPreservesAbsoluteSampleTimeAfterLateEnable) {
+    std::vector<RecognitionModelOutput> outputs{
+        Output(0.9f, 0.1f), Output(0.1f, 0.1f)};
+    auto model = std::make_shared<CapturingRecognitionModel>(outputs);
+    RecognitionModelPackage package = TestPackage();
+    package.peakLookaheadFrames = 0;
+    std::vector<SoundEvent> delivered;
+    SoundRecognizer recognizer(
+        model, package,
+        [&](const SoundEvent& event) { delivered.push_back(event); });
+    recognizer.OnStreamReset(9);
+
+    constexpr uint64_t kLateStart = 240'000;
+    std::vector<float> silence((1024 + 2 * 240) * 2, 0.0f);
+    recognizer.OnAudio(AudioBlockView{
+        silence, silence.size() / 2, 48000, 2, kLateStart, 9});
+    recognizer.Flush();
+
+    ASSERT_EQ(delivered.size(), 1u);
+    EXPECT_EQ(delivered[0].streamGeneration, 9u);
+    EXPECT_GE(delivered[0].onsetSample, kLateStart);
+}
+
 TEST(RecognitionModelPackage, ValidatesExportContractAndChecksum) {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /

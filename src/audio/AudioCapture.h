@@ -28,7 +28,10 @@ struct AudioCaptureConfig {
     std::string endpointId;
     std::string endpointName;
     uint32_t sampleRate{48000};
-    uint32_t channels{2};
+    /// 0 follows the endpoint's native count and channel map. Explicit 2/6/8
+    /// requests remain available for tools and compatibility.
+    uint32_t channels{0};
+    uint32_t channelMask{0};
     size_t bufferFrames{48000};
     size_t maxBacklogFrames{9600};
     size_t retainedFrames{960};
@@ -40,6 +43,8 @@ struct AudioReadResult {
     uint64_t firstSample{0};
     uint64_t streamGeneration{0};
     bool discontinuity{false};
+    bool layoutChanged{false};
+    AudioChannelLayout layout{};
 };
 
 struct AudioCaptureStatus {
@@ -49,15 +54,25 @@ struct AudioCaptureStatus {
     std::string lastError;
     uint32_t sampleRate{48000};
     uint32_t channels{2};
+    uint32_t channelMask{0};
+    AudioChannelLayout layout{};
     uint32_t nativeChannels{0};
     uint32_t nativeSampleRate{0};
+    uint32_t nativeChannelMask{0};
     uint64_t streamGeneration{0};
     uint64_t droppedFrames{0};
     uint64_t discardedBacklogFrames{0};
     uint64_t restartCount{0};
 };
 
-/// Pull-based 48 kHz stereo Windows WASAPI loopback capture.
+// True only when the actual endpoint mix format is native 48 kHz surround and
+// the client-visible layout preserves that exact channel count, mask, and role
+// order without channel conversion or a synthesized multichannel map.
+bool IsNativeDirectionalRadarFormat(
+    const AudioCaptureStatus& status,
+    const AudioChannelLayout& clientLayout) noexcept;
+
+/// Pull-based 48 kHz native-layout Windows WASAPI loopback capture.
 class AudioCapture {
 public:
     static constexpr size_t kDefaultBufferFrames = 48000;

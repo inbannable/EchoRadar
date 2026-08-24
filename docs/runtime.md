@@ -1,15 +1,67 @@
-# Runtime
+# EchoRadar v2 runtime
 
-EchoRadar captures the selected Windows render endpoint through WASAPI loopback at 48 kHz interleaved stereo float32. Playback stays on the user's selected output device.
+## Audio contract
 
-The capture callback only copies PCM to the bounded SPSC ring and updates levels. The processing thread consumes PCM, advances streaming features, runs recognition, retains a short scene history, and schedules direction inference. Endpoint changes, restarts, overflow, and excessive backlog create a new stream generation; all causal recognition state and pending direction scenes are reset at that boundary.
+The Windows runtime reads the endpoint's shared-mode mix format directly, then
+captures it through WASAPI loopback as 48 kHz float PCM while preserving the
+endpoint channel order and speaker roles. Miniaudio performs any client-side
+resampling, but directional radar is enabled only when the independently
+reported native mix format is itself 48 kHz with an explicit, matching 5.1 or
+7.1 `WAVEFORMATEXTENSIBLE` speaker mask. LFE is retained in diagnostics and
+recordings but excluded from radar and recognition input.
 
-Recognition uses the fixed `stereo-onset-v4` contract: 1024-point FFT, 240-sample hop, 64 mel bands, five input planes, a 128-frame context, gunshot/footstep onset heads, and self/remote/unknown source heads. Package metadata controls thresholds, peak lookahead, spacing, onset correction, scene activity, and self suppression.
+The directional convention is shared by DSP, logs, dashboard, and HUD:
 
-When `--direction-model` is supplied, accepted recognition events within 120 ms share one 12,304-sample scene. The direction model consumes `[1,5,48,64]` and returns up to three exchangeable 3D source vectors. Direction can be enabled independently for gunshots and footsteps. Missing audio or a model failure produces an explicit scene status and never invokes a fallback.
+- 0 degrees: front
+- 90 degrees: right
+- 180 degrees: rear
+- 270 degrees: left
 
-The HUD receives one update per scene and renders every returned source with confidence-derived uncertainty. The control UI displays the same `DirectionSceneResult`, including all sources, and can play the shared scene WAV.
+5.1 uses front left/right at 330/30 degrees, center at 0, and surrounds at
+250/110. 7.1 adds sides at 270/90 and backs at 210/150. `sampleRate` in capture
+status is the 48 kHz processing rate; `nativeSampleRate` is the endpoint mix
+rate used for eligibility. Unsupported rates, stereo, missing roles, duplicate
+roles, converted layouts, or malformed/missing native masks are reported
+without synthesizing a directional layout.
 
-Each logged event has `schema_version: 2` and retains event identity, stream generation, recognition timing and confidence, scene bounds and delivery timing, recognition/direction model versions, enabled classes, inference timing and dimensions, clip path, status, and the complete source array.
+The capture callback only copies to a bounded SPSC ring and updates per-channel
+meters. Endpoint changes, layout changes, restart, overflow, and excessive
+backlog advance the stream generation. Radar, recognition, history, and pending
+events reset together at that boundary.
 
-Settings use schema 3. Schema-2 files preserve active audio-profile, direction class-enable, HUD, UI-scale, and logging fields; retired tuning keys are ignored. Migration never deletes `direction-calibration.tsv`.
+## Radar
+
+Each channel is windowed with a 2,048-sample Hann window and transformed every
+480 samples. Per-bin channel power is combined with unit vectors for the
+channel azimuths. The vector angle supplies bearing and its normalized length
+supplies directivity. Weighted energy is linearly interpolated between adjacent
+15-degree sectors, converted to dBFS, then passed through configurable attack,
+release, and hold.
+
+Continuous mode publishes every active sector and a strongest-sector arrow.
+Event mode uses the unchanged stereo recognition model as a trigger and applies
+the same multichannel radar to the corresponding history window. At most three
+local energy peaks are returned; they must be within 18 dB of the strongest and
+separated by at least 30 degrees. Combined mode enables both paths.
+
+Opposing same-bin energy can cancel in the energy vector. Peaks are directional
+energy maxima—not source separation—and only azimuth is reported.
+
+## Recognition downmix
+
+Recognition continues to consume the `stereo-onset-v4` interface. Front left
+and right feed their respective outputs; center and surround/back channels are
+attenuated and panned according to side; LFE is omitted. The downmix is bounded
+to avoid clipping. Recognition and direction package formats are unchanged.
+
+## UI/runtime boundary
+
+The processing thread publishes immutable `AppSnapshot` values. The dashboard
+and HUD read the latest snapshot and submit typed `UiCommand` values; they do
+not mutate live DSP state. The runtime drains commands at safe points and
+publishes the resulting state in the next snapshot.
+
+Settings schema 4 lives at `%LOCALAPPDATA%\EchoRadar\v2\settings.json`.
+Sessions live below `%LOCALAPPDATA%\EchoRadar\v2\sessions`. JSONL schema 3 uses
+`stream_status`, `radar_frame`, and `event_direction` records. Continuous
+frames are rate-limited to 10 Hz while active; event results are written once.

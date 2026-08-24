@@ -116,8 +116,10 @@ void SoundRecognizer::RunInference(const StereoOnsetFeatureFrame& frame,
     if (!predicted) return;
 
     m_lastOutput = output;
-    m_trace.push_back(TracePoint{frame.endSample, output, frame.sceneActivity});
-    m_latestTraceSample = frame.endSample;
+    const uint64_t absoluteEndSample = m_sampleBase + frame.endSample;
+    m_trace.push_back(TracePoint{
+        absoluteEndSample, output, frame.sceneActivity});
+    m_latestTraceSample = absoluteEndSample;
     ++m_totalTraceCount;
     ProcessReadyPeaks(events, false);
 }
@@ -275,6 +277,8 @@ void SoundRecognizer::Reset() {
     m_totalTraceCount = 0;
     m_nextPeakIndex = 0;
     m_latestTraceSample = 0;
+    m_sampleBase = 0;
+    m_haveSampleBase = false;
     m_pending = {};
     m_inferenceTimes = {};
     m_inferenceTimeCount = 0;
@@ -289,6 +293,10 @@ void SoundRecognizer::OnAudio(const AudioBlockView& block) {
         block.interleaved.size() < block.frameCount * 2) {
         m_lastError = "SoundRecognizer requires 48 kHz interleaved stereo PCM";
         return;
+    }
+    if (!m_haveSampleBase) {
+        m_sampleBase = block.firstSample;
+        m_haveSampleBase = true;
     }
     PushInterleaved(block.interleaved.data(), block.frameCount);
 }

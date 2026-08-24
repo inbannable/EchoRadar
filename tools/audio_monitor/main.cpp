@@ -39,7 +39,13 @@ void PrintDevices() {
         std::cout << "  " << device.id << "  " << device.name;
         if (device.isDefault) std::cout << "  <default>";
         if (device.nativeChannels != 0) {
-            std::cout << "  " << device.nativeChannels << "ch@" << device.nativeSampleRate;
+            std::cout << "  " << device.nativeChannels << "ch@" << device.nativeSampleRate
+                      << " " << ToString(device.layout.kind) << " [";
+            for (uint32_t index = 0; index < device.layout.channelCount; ++index) {
+                if (index != 0) std::cout << ',';
+                std::cout << ToString(device.layout.roles[index]);
+            }
+            std::cout << ']';
         }
         std::cout << '\n';
     }
@@ -103,8 +109,10 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "EchoRadar audio monitor; Ctrl+C to stop\n";
     constexpr size_t kChunkFrames = 480;
-    std::vector<float> samples(kChunkFrames * 2);
+    std::vector<float> samples(kChunkFrames * kMaxAudioChannels);
     std::vector<float> recording;
+    uint32_t recordingChannels = 0;
+    uint32_t recordingChannelMask = 0;
     const uint64_t targetFrames = recordSeconds > 0.0
         ? static_cast<uint64_t>(recordSeconds * 48000.0) : 0;
     const auto stopAt = recordSeconds > 0.0
@@ -114,8 +122,14 @@ int main(int argc, char* argv[]) {
     while (g_running.load(std::memory_order_relaxed)) {
         const AudioReadResult read = capture.Read(samples.data(), kChunkFrames);
         if (read.frames != 0 && !recordPath.empty()) {
+            if (recordingChannels != read.layout.channelCount) {
+                recording.clear();
+                recordingChannels = read.layout.channelCount;
+                recordingChannelMask = read.layout.channelMask;
+            }
             recording.insert(recording.end(), samples.begin(),
-                             samples.begin() + static_cast<std::ptrdiff_t>(read.frames * 2));
+                             samples.begin() + static_cast<std::ptrdiff_t>(
+                                 read.frames * recordingChannels));
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= stopAt) break;
@@ -138,12 +152,17 @@ int main(int argc, char* argv[]) {
     std::cout << "\nStopped.\n";
 
     if (!recordPath.empty()) {
-        if (targetFrames != 0 && recording.size() / 2 > targetFrames) {
-            recording.resize(static_cast<size_t>(targetFrames) * 2);
+        if (recordingChannels == 0) {
+            std::cerr << "Could not write recording: no audio frames were captured\n";
+            return 1;
+        }
+        if (targetFrames != 0 && recording.size() / recordingChannels > targetFrames) {
+            recording.resize(static_cast<size_t>(targetFrames) * recordingChannels);
         }
         PcmAudio audio;
         audio.sampleRate = 48000;
-        audio.channels = 2;
+        audio.channels = static_cast<uint16_t>(recordingChannels);
+        audio.channelMask = recordingChannelMask;
         audio.interleaved = std::move(recording);
         std::string error;
         if (!WritePcm16Wav(recordPath, audio, &error)) {

@@ -1,9 +1,12 @@
 #include "AudioCapture.h"
 #include "AudioRingBuffer.h"
+#include "WasapiEndpointFormat.h"
 #include "miniaudio.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -14,6 +17,46 @@
 
 namespace EchoRadar {
 namespace {
+
+uint32_t WindowsSpeakerBit(ma_channel channel) {
+    switch (channel) {
+    case MA_CHANNEL_MONO:
+    case MA_CHANNEL_FRONT_CENTER: return WindowsSpeaker::FrontCenter;
+    case MA_CHANNEL_FRONT_LEFT: return WindowsSpeaker::FrontLeft;
+    case MA_CHANNEL_FRONT_RIGHT: return WindowsSpeaker::FrontRight;
+    case MA_CHANNEL_LFE: return WindowsSpeaker::Lfe;
+    case MA_CHANNEL_BACK_LEFT: return WindowsSpeaker::BackLeft;
+    case MA_CHANNEL_BACK_RIGHT: return WindowsSpeaker::BackRight;
+    case MA_CHANNEL_SIDE_LEFT: return WindowsSpeaker::SideLeft;
+    case MA_CHANNEL_SIDE_RIGHT: return WindowsSpeaker::SideRight;
+    default: return 0;
+    }
+}
+
+uint32_t WindowsSpeakerMask(const ma_channel* channels, uint32_t channelCount) {
+    uint32_t mask = 0;
+    for (uint32_t index = 0; index < channelCount; ++index) {
+        const uint32_t bit = WindowsSpeakerBit(channels[index]);
+        if (bit == 0 || (mask & bit) != 0u) return 0;
+        mask |= bit;
+    }
+    return mask;
+}
+
+ma_channel MiniaudioChannel(AudioChannelRole role) {
+    switch (role) {
+    case AudioChannelRole::FrontLeft: return MA_CHANNEL_FRONT_LEFT;
+    case AudioChannelRole::FrontRight: return MA_CHANNEL_FRONT_RIGHT;
+    case AudioChannelRole::FrontCenter: return MA_CHANNEL_FRONT_CENTER;
+    case AudioChannelRole::Lfe: return MA_CHANNEL_LFE;
+    case AudioChannelRole::BackLeft: return MA_CHANNEL_BACK_LEFT;
+    case AudioChannelRole::BackRight: return MA_CHANNEL_BACK_RIGHT;
+    case AudioChannelRole::SideLeft: return MA_CHANNEL_SIDE_LEFT;
+    case AudioChannelRole::SideRight: return MA_CHANNEL_SIDE_RIGHT;
+    case AudioChannelRole::Unknown: return MA_CHANNEL_NONE;
+    }
+    return MA_CHANNEL_NONE;
+}
 
 std::string Lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
@@ -102,6 +145,8 @@ struct AudioCapture::Impl {
     std::atomic<float> rightRms{0.0f};
     std::atomic<float> leftPeak{0.0f};
     std::atomic<float> rightPeak{0.0f};
+    std::array<std::atomic<float>, kMaxAudioChannels> channelRms{};
+    std::array<std::atomic<float>, kMaxAudioChannels> channelPeak{};
     std::atomic<bool> running{false};
     std::atomic<bool> plannedStop{false};
     std::atomic<bool> unexpectedStop{false};
@@ -111,6 +156,7 @@ struct AudioCapture::Impl {
 
     mutable std::mutex statusMutex;
     AudioDeviceInfo activeEndpoint;
+    AudioChannelLayout activeLayout;
     std::string lastError;
 
     uint64_t observedLossSerial{0};
@@ -119,6 +165,7 @@ struct AudioCapture::Impl {
     std::atomic<uint64_t> discardedBacklogFrames{0};
     std::atomic<uint64_t> restartCount{0};
     bool pendingDiscontinuity{false};
+    bool pendingLayoutChange{false};
 
     std::chrono::steady_clock::time_point nextEndpointPoll{};
     std::chrono::steady_clock::time_point nextRetry{};
@@ -129,31 +176,47 @@ struct AudioCapture::Impl {
         lastError = std::move(error);
     }
 
-    void SetEndpoint(const AudioDeviceInfo& info) {
+    void SetEndpoint(const AudioDeviceInfo& info, const AudioChannelLayout& layout) {
         std::lock_guard<std::mutex> lock(statusMutex);
         activeEndpoint = info;
+        activeLayout = layout;
         lastError.clear();
     }
 
     void UpdateLevels(const float* samples, ma_uint32 frameCount) {
         if (samples == nullptr || frameCount == 0) return;
-        float sumLeft = 0.0f;
-        float sumRight = 0.0f;
-        float peakLeft = 0.0f;
-        float peakRight = 0.0f;
+        const size_t channelCount = ring ? ring->ChannelCount() : 0;
+        if (channelCount == 0 || channelCount > kMaxAudioChannels) return;
+        std::array<float, kMaxAudioChannels> sums{};
+        std::array<float, kMaxAudioChannels> peaks{};
         for (ma_uint32 index = 0; index < frameCount; ++index) {
-            const float left = samples[index * 2];
-            const float right = samples[index * 2 + 1];
-            sumLeft += left * left;
-            sumRight += right * right;
-            peakLeft = std::max(peakLeft, std::abs(left));
-            peakRight = std::max(peakRight, std::abs(right));
+            for (size_t channel = 0; channel < channelCount; ++channel) {
+                const float sample = samples[index * channelCount + channel];
+                sums[channel] += sample * sample;
+                peaks[channel] = std::max(peaks[channel], std::abs(sample));
+            }
         }
         const float inverse = 1.0f / static_cast<float>(frameCount);
-        leftRms.store(std::sqrt(sumLeft * inverse), std::memory_order_relaxed);
-        rightRms.store(std::sqrt(sumRight * inverse), std::memory_order_relaxed);
-        leftPeak.store(peakLeft, std::memory_order_relaxed);
-        rightPeak.store(peakRight, std::memory_order_relaxed);
+        for (size_t channel = 0; channel < kMaxAudioChannels; ++channel) {
+            const float rms = channel < channelCount
+                ? std::sqrt(sums[channel] * inverse)
+                : 0.0f;
+            const float peak = channel < channelCount ? peaks[channel] : 0.0f;
+            channelRms[channel].store(rms, std::memory_order_relaxed);
+            channelPeak[channel].store(peak, std::memory_order_relaxed);
+        }
+        leftRms.store(channelRms[0].load(std::memory_order_relaxed),
+                      std::memory_order_relaxed);
+        rightRms.store(channelCount > 1
+                           ? channelRms[1].load(std::memory_order_relaxed)
+                           : channelRms[0].load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
+        leftPeak.store(channelPeak[0].load(std::memory_order_relaxed),
+                       std::memory_order_relaxed);
+        rightPeak.store(channelCount > 1
+                            ? channelPeak[1].load(std::memory_order_relaxed)
+                            : channelPeak[0].load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
     }
 
     static void DataCallback(ma_device* nativeDevice, void*, const void* input,
@@ -197,6 +260,8 @@ struct AudioCapture::Impl {
         rightRms.store(0.0f, std::memory_order_relaxed);
         leftPeak.store(0.0f, std::memory_order_relaxed);
         rightPeak.store(0.0f, std::memory_order_relaxed);
+        for (auto& rms : channelRms) rms.store(0.0f, std::memory_order_relaxed);
+        for (auto& peak : channelPeak) peak.store(0.0f, std::memory_order_relaxed);
         nextReadSample = 0;
     }
 
@@ -210,10 +275,35 @@ struct AudioCapture::Impl {
             return false;
         }
 
+        uint32_t requestedChannels = config.channels;
+        if (requestedChannels == 0 && config.channelMask != 0) {
+            requestedChannels = std::popcount(config.channelMask);
+        }
+        std::array<ma_channel, kMaxAudioChannels> requestedChannelMap{};
+        if (config.channelMask != 0) {
+            const auto requestedLayout =
+                MakeAudioChannelLayout(requestedChannels, config.channelMask);
+            if (!requestedLayout) {
+                error = "Configured Windows speaker mask is unsupported";
+                return false;
+            }
+            for (size_t index = 0; index < requestedLayout->channelCount; ++index) {
+                requestedChannelMap[index] = MiniaudioChannel(requestedLayout->roles[index]);
+            }
+        }
+
         ma_device_config nativeConfig = ma_device_config_init(ma_device_type_loopback);
         nativeConfig.capture.format = ma_format_f32;
-        nativeConfig.capture.channels = config.channels;
+        nativeConfig.capture.channels = requestedChannels;
+        nativeConfig.capture.pChannelMap = config.channelMask != 0
+            ? requestedChannelMap.data()
+            : nullptr;
         nativeConfig.sampleRate = config.sampleRate;
+        // Keep WASAPI's mix format intact so internalSampleRate and the
+        // internal channel map continue to describe the endpoint itself.
+        // Miniaudio may then resample to the requested 48 kHz client format,
+        // but that conversion must not make a 44.1 kHz endpoint look native.
+        nativeConfig.wasapi.noAutoConvertSRC = MA_TRUE;
         nativeConfig.periodSizeInFrames = config.sampleRate / 100u;
         nativeConfig.dataCallback = DataCallback;
         nativeConfig.stopCallback = StopCallback;
@@ -229,6 +319,45 @@ struct AudioCapture::Impl {
             return false;
         }
         deviceInitialized = true;
+
+        const uint32_t channelMask =
+            WindowsSpeakerMask(device.capture.channelMap, device.capture.channels);
+        const auto layout = MakeAudioChannelLayout(device.capture.channels, channelMask);
+        if (!layout) {
+            ma_device_uninit(&device);
+            deviceInitialized = false;
+            error = "Endpoint channel map is not supported (requires stereo, 5.1, or 7.1)";
+            return false;
+        }
+
+        WasapiEndpointFormat endpointFormat;
+        bool haveEndpointFormat = false;
+#ifdef _WIN32
+        haveEndpointFormat = QueryWasapiEndpointFormat(
+            endpointId.wasapi, endpointFormat);
+#endif
+        endpoint.nativeChannels = haveEndpointFormat
+            ? endpointFormat.channelCount : device.capture.internalChannels;
+        endpoint.nativeSampleRate = haveEndpointFormat
+            ? endpointFormat.sampleRate : device.capture.internalSampleRate;
+        // Fail closed when the operating-system format cannot be queried. A
+        // miniaudio default map is useful for conversion but is not evidence of
+        // a native multichannel WAVEFORMATEXTENSIBLE speaker mask.
+        endpoint.nativeChannelMask = haveEndpointFormat
+            ? endpointFormat.channelMask : 0u;
+        if (const auto nativeLayout = MakeAudioChannelLayout(endpoint.nativeChannels,
+                                                              endpoint.nativeChannelMask)) {
+            endpoint.layout = *nativeLayout;
+        } else {
+            endpoint.layout = *layout;
+        }
+
+        AudioChannelLayout previousLayout;
+        {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            previousLayout = activeLayout;
+        }
+        ring = std::make_unique<AudioRingBuffer>(config.bufferFrames, layout->channelCount);
         running.store(true, std::memory_order_release);
         const ma_result startResult = ma_device_start(&device);
         if (startResult != MA_SUCCESS) {
@@ -242,14 +371,17 @@ struct AudioCapture::Impl {
 
         if (streamGeneration.load(std::memory_order_relaxed) == 0) {
             streamGeneration.store(1, std::memory_order_relaxed);
-        } else if (restarting) {
+        } else {
+            // Every successful device open starts a distinct stream, including
+            // explicit Stop()/Start() endpoint changes initiated by the UI.
             streamGeneration.fetch_add(1, std::memory_order_relaxed);
         }
         pendingDiscontinuity = true;
+        pendingLayoutChange = previousLayout != *layout;
         nextReadSample = 0;
         observedLossSerial = lossSerial.load(std::memory_order_acquire);
         if (restarting) restartCount.fetch_add(1, std::memory_order_relaxed);
-        SetEndpoint(endpoint);
+        SetEndpoint(endpoint, *layout);
         state.store(AudioCaptureState::Running, std::memory_order_release);
         nextEndpointPoll = std::chrono::steady_clock::now() +
             std::chrono::milliseconds(config.endpointPollMs);
@@ -268,6 +400,15 @@ struct AudioCapture::Impl {
 AudioCapture::AudioCapture() : m_impl(std::make_unique<Impl>()) {}
 AudioCapture::~AudioCapture() { Stop(); }
 
+bool IsNativeDirectionalRadarFormat(
+    const AudioCaptureStatus& status,
+    const AudioChannelLayout& clientLayout) noexcept {
+    const auto nativeLayout = MakeAudioChannelLayout(
+        status.nativeChannels, status.nativeChannelMask);
+    return status.nativeSampleRate == 48000 && nativeLayout.has_value() &&
+        nativeLayout->IsDirectional() && clientLayout == *nativeLayout;
+}
+
 bool AudioCapture::Start(const AudioCaptureConfig& config) {
     return StartInternal(config);
 }
@@ -279,19 +420,30 @@ bool AudioCapture::StartInternal(const AudioCaptureConfig& config) {
     m_impl->lossSerial.store(0, std::memory_order_relaxed);
     m_impl->observedLossSerial = 0;
     m_impl->nextReadSample = 0;
-    m_impl->streamGeneration.store(0, std::memory_order_relaxed);
     m_impl->discardedBacklogFrames.store(0, std::memory_order_relaxed);
     m_impl->restartCount.store(0, std::memory_order_relaxed);
     m_impl->pendingDiscontinuity = false;
+    m_impl->pendingLayoutChange = false;
     {
         std::lock_guard<std::mutex> lock(m_impl->statusMutex);
         m_impl->activeEndpoint = {};
+        m_impl->activeLayout = {};
         m_impl->lastError.clear();
     }
-    if (config.sampleRate != 48000 || config.channels != 2 || config.bufferFrames < 2 ||
+    const bool validChannelCount = config.channels == 0 || config.channels == 2 ||
+        config.channels == 6 || config.channels == 8;
+    const uint32_t maskChannels = config.channels != 0
+        ? config.channels
+        : std::popcount(config.channelMask);
+    const bool validMask = config.channelMask == 0 ||
+        MakeAudioChannelLayout(maskChannels, config.channelMask).has_value();
+    if (config.sampleRate != 48000 || !validChannelCount || !validMask ||
+        config.bufferFrames < 2 ||
         config.retainedFrames > config.maxBacklogFrames ||
         config.maxBacklogFrames > config.bufferFrames || config.endpointPollMs == 0) {
-        m_impl->SetError("Audio capture requires 48 kHz stereo and a valid backlog policy");
+        m_impl->SetError(
+            "Audio capture requires 48 kHz, native/stereo/5.1/7.1 channels, "
+            "a matching Windows speaker mask, and a valid backlog policy");
         m_impl->state.store(AudioCaptureState::Failed, std::memory_order_release);
         return false;
     }
@@ -301,7 +453,7 @@ bool AudioCapture::StartInternal(const AudioCaptureConfig& config) {
     return false;
 #endif
 
-    m_impl->ring = std::make_unique<AudioRingBuffer>(config.bufferFrames);
+    m_impl->ring.reset();
     m_impl->state.store(AudioCaptureState::Starting, std::memory_order_release);
 #ifdef _WIN32
     const ma_backend backends[] = {ma_backend_wasapi};
@@ -385,7 +537,6 @@ AudioCaptureStatus AudioCapture::GetStatus() const {
     if (!m_impl) return status;
     status.state = m_impl->state.load(std::memory_order_acquire);
     status.sampleRate = m_impl->config.sampleRate;
-    status.channels = m_impl->config.channels;
     status.streamGeneration = m_impl->streamGeneration.load(std::memory_order_relaxed);
     status.droppedFrames = m_impl->droppedFrames.load(std::memory_order_relaxed);
     status.discardedBacklogFrames =
@@ -394,8 +545,14 @@ AudioCaptureStatus AudioCapture::GetStatus() const {
     std::lock_guard<std::mutex> lock(m_impl->statusMutex);
     status.endpointId = m_impl->activeEndpoint.id;
     status.endpointName = m_impl->activeEndpoint.name;
+    status.layout = m_impl->activeLayout;
+    status.channels = m_impl->activeLayout.channelCount != 0
+        ? m_impl->activeLayout.channelCount
+        : m_impl->config.channels;
+    status.channelMask = m_impl->activeLayout.channelMask;
     status.nativeChannels = m_impl->activeEndpoint.nativeChannels;
     status.nativeSampleRate = m_impl->activeEndpoint.nativeSampleRate;
+    status.nativeChannelMask = m_impl->activeEndpoint.nativeChannelMask;
     status.lastError = m_impl->lastError;
     return status;
 }
@@ -410,8 +567,9 @@ uint64_t AudioCapture::GetDroppedFrames() const {
 
 AudioReadResult AudioCapture::Read(float* destination, size_t frameCount) {
     AudioReadResult result;
-    if (!m_impl || destination == nullptr || frameCount == 0 || !m_impl->ring) return result;
+    if (!m_impl || destination == nullptr || frameCount == 0) return result;
     Poll();
+    if (!m_impl->ring) return result;
 
     const uint64_t loss = m_impl->lossSerial.load(std::memory_order_acquire);
     if (loss != m_impl->observedLossSerial) {
@@ -435,7 +593,13 @@ AudioReadResult AudioCapture::Read(float* destination, size_t frameCount) {
     result.firstSample = m_impl->nextReadSample;
     result.streamGeneration = m_impl->streamGeneration.load(std::memory_order_relaxed);
     result.discontinuity = m_impl->pendingDiscontinuity;
+    result.layoutChanged = m_impl->pendingLayoutChange;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->statusMutex);
+        result.layout = m_impl->activeLayout;
+    }
     m_impl->pendingDiscontinuity = false;
+    m_impl->pendingLayoutChange = false;
     result.frames = m_impl->ring->PopInterleaved(destination, frameCount);
     m_impl->nextReadSample += result.frames;
     return result;
@@ -447,12 +611,22 @@ size_t AudioCapture::ReadInterleaved(float* destination, size_t frameCount) {
 
 AudioLevels AudioCapture::GetCurrentLevels() const {
     if (!m_impl) return {};
-    return AudioLevels{
-        m_impl->leftRms.load(std::memory_order_relaxed),
-        m_impl->rightRms.load(std::memory_order_relaxed),
-        m_impl->leftPeak.load(std::memory_order_relaxed),
-        m_impl->rightPeak.load(std::memory_order_relaxed),
-    };
+    AudioLevels levels;
+    levels.leftRms = m_impl->leftRms.load(std::memory_order_relaxed);
+    levels.rightRms = m_impl->rightRms.load(std::memory_order_relaxed);
+    levels.leftPeak = m_impl->leftPeak.load(std::memory_order_relaxed);
+    levels.rightPeak = m_impl->rightPeak.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(m_impl->statusMutex);
+        levels.channelCount = m_impl->activeLayout.channelCount;
+    }
+    for (size_t channel = 0; channel < kMaxAudioChannels; ++channel) {
+        levels.rms[channel] =
+            m_impl->channelRms[channel].load(std::memory_order_relaxed);
+        levels.peak[channel] =
+            m_impl->channelPeak[channel].load(std::memory_order_relaxed);
+    }
+    return levels;
 }
 
 } // namespace EchoRadar

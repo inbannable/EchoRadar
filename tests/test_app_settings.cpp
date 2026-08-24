@@ -63,7 +63,7 @@ TEST(AppSettings, RoundTripPreservesRuntimeSettings) {
     EXPECT_FALSE(loaded.sessionLogging);
 
     const std::string saved = ReadText(path);
-    EXPECT_NE(saved.find("\"schema_version\": 3"), std::string::npos);
+    EXPECT_NE(saved.find("\"schema_version\": 4"), std::string::npos);
     EXPECT_EQ(saved.find("localization_"), std::string::npos);
     EXPECT_EQ(saved.find("calibration"), std::string::npos);
     std::filesystem::remove_all(root);
@@ -100,7 +100,7 @@ TEST(AppSettings, MigratesSchemaTwoAndLeavesCalibrationDataUntouched) {
     ASSERT_TRUE(AppSettingsFile::Save(path, loaded, &error)) << error;
     EXPECT_EQ(ReadText(calibration), calibrationBefore);
     const std::string migrated = ReadText(path);
-    EXPECT_NE(migrated.find("\"schema_version\": 3"), std::string::npos);
+    EXPECT_NE(migrated.find("\"schema_version\": 4"), std::string::npos);
     EXPECT_EQ(migrated.find("localization_sample_ms"), std::string::npos);
     std::filesystem::remove_all(root);
 }
