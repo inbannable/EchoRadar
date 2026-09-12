@@ -388,3 +388,25 @@ TEST(V2Setup, UnsupportedFormatsDisableOnlyDirectionalRadar) {
     EXPECT_TRUE(sampleRate.recognitionAccessible);
     EXPECT_TRUE(sampleRate.settingsAccessible);
 }
+
+TEST(V2Setup, HeadphonesCompleteSetupWithoutClaimingSurroundAndPersist) {
+    auto state = ApplySetupEvent({}, SetupEvent::EndpointSelected).state;
+    state = ApplySetupEvent(state, SetupEvent::HeadphoneFormatSupported).state;
+    EXPECT_EQ(state.step, SetupStep::ConfirmChannels);
+    EXPECT_FALSE(SetupAvailability(state.supportState).directionalRadar);
+    state = ApplySetupEvent(state, SetupEvent::ChannelActivityConfirmed).state;
+    state = ApplySetupEvent(state, SetupEvent::HudPreviewConfirmed).state;
+    ASSERT_TRUE(state.completed);
+    const auto root = V2TestRoot("echoradar-headphone-setup-test");
+    const auto path = root / "settings.json";
+    AppSettings settings;
+    settings.onboarding = state;
+    std::string error;
+    ASSERT_TRUE(AppSettingsFile::Save(path, settings, &error)) << error;
+    AppSettings loaded;
+    ASSERT_TRUE(AppSettingsFile::Load(path, loaded, &error)) << error;
+    EXPECT_TRUE(loaded.onboarding.completed);
+    EXPECT_EQ(loaded.onboarding.supportState, SetupSupportState::HeadphoneStereo);
+    EXPECT_FALSE(SetupAvailability(loaded.onboarding.supportState).directionalRadar);
+    std::filesystem::remove_all(root);
+}

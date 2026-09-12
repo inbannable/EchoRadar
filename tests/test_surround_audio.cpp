@@ -296,3 +296,25 @@ TEST(Pcm16WavWriter, RejectsMisalignedWritesAndMissingSurroundMask) {
     EXPECT_FALSE(writer.Close(&error));
     std::filesystem::remove(path);
 }
+
+TEST(SurroundAudioLayout, ResamplingPreservesDirectionButUpmixDoesNot) {
+    AudioCaptureStatus status;
+    status.sampleRate = 48000;
+    status.nativeSampleRate = 44100;
+    status.nativeChannels = 6;
+    status.nativeChannelMask = WindowsSpeaker::Surround51Back;
+    const auto surround = *MakeAudioChannelLayout(6, WindowsSpeaker::Surround51Back);
+    EXPECT_TRUE(IsDirectionalRadarFormat(status, surround));
+    status.nativeSampleRate = 96000;
+    EXPECT_TRUE(IsDirectionalRadarFormat(status, surround));
+    status.nativeChannels = 2;
+    status.nativeChannelMask = WindowsSpeaker::Stereo;
+    EXPECT_FALSE(IsDirectionalRadarFormat(status, surround));
+    EXPECT_FALSE(IsDirectionalRadarFormat(status, *MakeAudioChannelLayout(2, WindowsSpeaker::Stereo)));
+    status.nativeChannels = 6;
+    status.nativeChannelMask = 0;
+    EXPECT_FALSE(IsDirectionalRadarFormat(status, surround));
+    status.nativeChannelMask = WindowsSpeaker::Surround51Back;
+    status.sampleRate = 44100;
+    EXPECT_FALSE(IsDirectionalRadarFormat(status, surround));
+}

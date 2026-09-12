@@ -608,7 +608,8 @@ void HudOverlayRenderer::Render() {
 
     const float sensitivity = snapshot->settings.radar.sensitivityDbfs;
     const RadarFrame& frame = snapshot->radar.frame;
-    if (snapshot->radar.mode != RadarMode::Events &&
+    if (snapshot->capture.audioFresh &&
+        snapshot->radar.mode != RadarMode::Events &&
         frame.layout.IsDirectional()) {
         for (size_t index = 0; index < frame.sectorActivitiesDbfs.size(); ++index) {
             const float intensity = Intensity(
@@ -625,12 +626,13 @@ void HudOverlayRenderer::Render() {
     }
 
     std::optional<float> newestEventAzimuth;
-    if (snapshot->capture.state == AudioCaptureState::Running &&
+    if (snapshot->capture.audioFresh &&
+        snapshot->capture.state == AudioCaptureState::Running &&
         snapshot->radar.mode != RadarMode::Continuous) {
         const double nowAudio = static_cast<double>(
             snapshot->capture.streamSample) / 48000.0;
         for (const RecentEventSnapshot& event : snapshot->recentEvents) {
-            if (event.streamGeneration != snapshot->capture.streamGeneration ||
+            if (!event.liveMarkerEligible || event.streamGeneration != snapshot->capture.streamGeneration ||
                 event.peakCount == 0 || nowAudio < event.timestampSeconds) {
                 continue;
             }
@@ -655,6 +657,7 @@ void HudOverlayRenderer::Render() {
     }
 
     const bool useContinuousArrow =
+        snapshot->capture.audioFresh &&
         snapshot->capture.state == AudioCaptureState::Running &&
         snapshot->radar.mode != RadarMode::Events &&
         frame.status == RadarRuntimeStatus::Active;
@@ -700,7 +703,7 @@ void HudOverlayRenderer::Render() {
                                static_cast<int>(220 * opacity)), preset);
     const bool captureRunning =
         snapshot->capture.state == AudioCaptureState::Running;
-    const bool captureHealthy = captureRunning &&
+    const bool captureHealthy = captureRunning && snapshot->capture.audioFresh &&
         snapshot->layout.directionalRadarAvailable && !snapshot->error;
     drawList->AddText({localTopLeft.x + bounds.width - 108.0f,
                        localTopLeft.y + bounds.height - 28.0f},

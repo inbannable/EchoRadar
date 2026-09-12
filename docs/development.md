@@ -31,7 +31,7 @@ src/app          runtime orchestration and schema-3 session logging
 src/audio        loopback capture, layouts, buffers, downmix, WAV
 src/dsp          shared FFT/window helpers
 src/radar        multichannel energy-vector radar
-src/recognition  unchanged stereo recognition package/runtime
+src/recognition  stereo recognition packages and guarded runtime
 src/direction    retained direction-package compatibility
 src/settings     schema-4 settings and per-display HUD state
 src/ui           immutable snapshots and typed command queue
@@ -53,3 +53,22 @@ matrix in [evaluation.md](evaluation.md). Verify the frozen v1 branch
 independently. A `v2.0.0-research` release must include `LICENSE`, `NOTICE`,
 algorithm provenance, raw evaluation results, known limitations, and hashes for
 published binaries.
+
+## Portable dashboard visual QA
+
+`ECHORADAR_BUILD_UI_PREVIEW=ON` builds `echoradar_ui_preview` using the
+production `DashboardView.cpp`, the pinned ImGui core, and a software renderer.
+It does not open a device or simulate Windows audio. Example:
+
+```sh
+cmake -S . -B build -DECHORADAR_BUILD_APP=OFF -DECHORADAR_BUILD_UI_PREVIEW=ON
+cmake --build build --target echoradar_ui_preview
+build/tools/ui_preview/echoradar_ui_preview overview.ppm 0 1440 1000
+```
+
+Arguments are output PPM, page 0–4, width, height, and an optional `surround`
+fixture flag. Preview uses an installed Arial/Segoe UI font when available;
+Windows production uses Segoe UI and a CJK fallback. The preview covers layout,
+not DirectX, hardware capture, or Windows DPI behavior. Historical release-v2
+research documents describe the earlier strict 48 kHz contract; see
+[audio/headphone refactor](audio-headphone-refactor.md) for this revision.

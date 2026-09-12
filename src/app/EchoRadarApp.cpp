@@ -47,9 +47,9 @@ std::optional<AudioChannelLayout> NativeLayout(
         status.nativeChannels, status.nativeChannelMask);
 }
 
-bool IsNativeRadarFormat(const AudioCaptureStatus& status,
+bool IsRadarFormat(const AudioCaptureStatus& status,
                          const AudioChannelLayout& layout) {
-    return IsNativeDirectionalRadarFormat(status, layout);
+    return IsDirectionalRadarFormat(status, layout);
 }
 
 HudDisplaySettings EffectiveHudSettings(
@@ -280,10 +280,6 @@ void EchoRadarApp::HandleEvent(const SoundEvent& event) {
 void EchoRadarApp::ProcessPendingRadarEvents() {
     if (!m_radar || !m_surroundHistory || m_pendingEvents.empty()) return;
     const AppSettings settings = m_settings->Snapshot();
-    if (!IsEventMode(settings.radar.mode)) {
-        FinalizePendingRadarEvents(RadarRuntimeStatus::MalformedInput);
-        return;
-    }
 
     const uint64_t oldest = m_surroundHistory->GetOldestSample();
     const uint64_t newest = m_surroundHistory->GetNewestSampleExclusive();
@@ -362,6 +358,8 @@ void EchoRadarApp::FinalizePendingRadarEvents(RadarRuntimeStatus status) {
 
 void EchoRadarApp::ResetPipelines(const AudioReadResult& read) {
     FinalizePendingRadarEvents(RadarRuntimeStatus::MalformedInput);
+    m_signalActivity.Reset();
+    for (auto& event : m_recentEvents) event.liveMarkerEligible = false;
     m_currentGeneration = read.streamGeneration;
     m_currentAudioSample = read.firstSample;
     m_currentLayout = read.layout;
@@ -462,17 +460,9 @@ void EchoRadarApp::ProcessUiCommands() {
                 m_recognitionError.clear();
             } else if constexpr (std::is_same_v<Command, SetRadarModeCommand>) {
                 AppSettings settings = m_settings->Snapshot();
-                const bool eventPipelineChanged =
-                    IsEventMode(settings.radar.mode) != IsEventMode(value.mode);
                 settings.radar.mode = value.mode;
                 CommitSettings(settings);
                 ApplyRadarSettings(settings);
-                if (eventPipelineChanged) {
-                    FinalizePendingRadarEvents(RadarRuntimeStatus::MalformedInput);
-                    if (m_recognizer) {
-                        m_recognizer->OnStreamReset(m_currentGeneration);
-                    }
-                }
                 ClearLatestRadarFrame(RadarRuntimeStatus::WaitingForAudio);
             } else if constexpr (std::is_same_v<Command, SetRadarPresetCommand>) {
                 AppSettings settings = m_settings->Snapshot();
@@ -757,11 +747,13 @@ void EchoRadarApp::PublishSnapshot(const AudioCaptureStatus& status,
     snapshot.capture.state = status.state;
     snapshot.capture.endpointId = status.endpointId;
     snapshot.capture.endpointName = status.endpointName;
-    // The dashboard validates the endpoint format, not miniaudio's resampled
-    // processing format. A native 44.1 kHz endpoint must never appear eligible
-    // merely because the capture client requested 48 kHz output.
+    // Display the original endpoint rate separately from the analysis rate.
+    // Direction eligibility still requires the original channel-role map.
     snapshot.capture.sampleRate = status.nativeSampleRate;
     snapshot.capture.levels = levels;
+    snapshot.capture.audioFresh = m_audioFresh && status.state == AudioCaptureState::Running;
+    snapshot.capture.signal = m_signalActivity.Snapshot();
+    snapshot.capture.processingSampleRate = status.sampleRate;
     snapshot.capture.streamGeneration = status.streamGeneration;
     snapshot.capture.streamSample = m_currentAudioSample;
     snapshot.capture.droppedFrames = status.droppedFrames;
@@ -770,19 +762,19 @@ void EchoRadarApp::PublishSnapshot(const AudioCaptureStatus& status,
     const auto nativeLayout = NativeLayout(status);
     snapshot.layout.detected = nativeLayout.value_or(status.layout);
     snapshot.layout.directionalRadarAvailable =
-        IsNativeRadarFormat(status, status.layout);
+        IsRadarFormat(status, status.layout);
     if (status.nativeSampleRate == 0) {
         snapshot.layout.statusText =
             "Waiting for the endpoint's native audio format.";
-    } else if (status.nativeSampleRate != 48000) {
+    } else if (status.sampleRate != 48000) {
         snapshot.layout.statusText =
-            "Directional radar requires a native 48 kHz endpoint.";
+            "Audio processing requires 48 kHz PCM.";
     } else if (!nativeLayout) {
         snapshot.layout.statusText =
             "The endpoint has no validated native Windows speaker mask.";
     } else if (nativeLayout->kind == AudioChannelLayoutKind::Stereo) {
         snapshot.layout.statusText =
-            "Stereo is available to recognition but unsupported for directional radar.";
+            "Headphone stereo capture is ready. Left/right energy is available; front/rear azimuth is unknown.";
     } else if (!nativeLayout->IsDirectional()) {
         snapshot.layout.statusText =
             "Select a native 5.1 or 7.1 layout with a valid Windows speaker mask.";
@@ -790,7 +782,9 @@ void EchoRadarApp::PublishSnapshot(const AudioCaptureStatus& status,
         snapshot.layout.statusText =
             "Capture channel conversion is active; native roles are required for radar.";
     } else {
-        snapshot.layout.statusText = "Native surround layout is ready.";
+        snapshot.layout.statusText = status.nativeSampleRate == 48000
+            ? "Discrete surround channels are ready."
+            : "Surround channels preserved; resampled to 48 kHz for analysis.";
     }
 
     snapshot.settings = m_settings->Snapshot();
@@ -806,6 +800,11 @@ void EchoRadarApp::PublishSnapshot(const AudioCaptureStatus& status,
         snapshot.radar.frame.streamGeneration = status.streamGeneration;
         snapshot.radar.frame.status = RadarRuntimeStatus::WaitingForAudio;
         snapshot.radar.state = RadarRuntimeStatus::WaitingForAudio;
+    }
+    if (m_recognizer) {
+        snapshot.model.inferenceCount = m_recognizer->Stats().inferenceCount;
+        snapshot.model.suppressedEvents = m_recognizer->Stats().suppressedEventCount;
+        snapshot.model.probabilities = m_recognizer->LastOutput().onsetProbabilities;
     }
     snapshot.model.state = m_modelState;
     snapshot.model.name = m_config.modelDirectory.filename().string();
@@ -844,21 +843,22 @@ void EchoRadarApp::PublishSnapshot(const AudioCaptureStatus& status,
                           "capture-failed",
                           "System-output capture failed.",
                           status.lastError, true};
-    } else if (!snapshot.layout.directionalRadarAvailable) {
+    } else if (!snapshot.layout.directionalRadarAvailable &&
+               snapshot.layout.detected.kind != AudioChannelLayoutKind::Stereo) {
         snapshot.error = {
-            status.nativeSampleRate != 48000
+            status.sampleRate != 48000
                 ? InlineErrorKind::UnsupportedSampleRate
                 : InlineErrorKind::UnsupportedLayout,
             "unsupported-audio",
             snapshot.layout.statusText,
-            "Choose a 48 kHz 5.1/7.1 format in Windows sound settings.",
+            "Choose a playback endpoint with a valid discrete 5.1/7.1 speaker layout.",
             false};
     } else if (status.state == AudioCaptureState::Running &&
-               snapshot.radar.state == RadarRuntimeStatus::Silent) {
+               !snapshot.capture.signal.active) {
         snapshot.error = {InlineErrorKind::SilentInput,
                           "silent-input",
-                          "No directional energy is above the current sensitivity.",
-                          "Play surround content or lower sensitivity.", false};
+                          "Playback audio is below the activity threshold.",
+                          "Play audio and check that this endpoint is the one used by your game.", false};
     } else if (IsEventMode(snapshot.settings.radar.mode) &&
                (m_modelState == ModelUiState::Missing ||
                 m_modelState == ModelUiState::Disabled)) {
@@ -880,6 +880,8 @@ void EchoRadarApp::DSPLoop() {
     std::vector<float> surround(kChunkFrames * kMaxAudioChannels, 0.0f);
     std::vector<float> stereo(kChunkFrames * 2u, 0.0f);
     auto nextSnapshot = std::chrono::steady_clock::now();
+    auto lastAudio = nextSnapshot;
+    bool stalled = false;
 
     while (!m_stop.load(std::memory_order_acquire)) {
         ProcessUiCommands();
@@ -889,10 +891,11 @@ void EchoRadarApp::DSPLoop() {
         const bool captureRunning =
             status.state == AudioCaptureState::Running;
         const bool directionalRadarAvailable =
-            IsNativeRadarFormat(status, read.layout);
-        const bool eventModeEnabled =
-            IsEventMode(m_settings->Snapshot().radar.mode);
+            IsRadarFormat(status, read.layout);
+
         if (!captureRunning) {
+            m_audioFresh = false;
+            m_signalActivity.Reset();
             ClearLatestRadarFrame(RadarRuntimeStatus::WaitingForAudio);
         }
         if (status.state != m_lastLoggedCaptureState ||
@@ -902,12 +905,16 @@ void EchoRadarApp::DSPLoop() {
             m_sessionLog.WriteStreamStatus(status, status.lastError);
         }
 
-        if (read.discontinuity || read.layoutChanged ||
+        if ((read.frames != 0 && (read.discontinuity || read.layoutChanged)) ||
             read.streamGeneration != m_currentGeneration ||
             read.layout != m_currentLayout) {
             ResetPipelines(read);
         }
         if (read.frames != 0) {
+            lastAudio = std::chrono::steady_clock::now();
+            stalled = false;
+            m_audioFresh = captureRunning;
+            m_signalActivity.Push(surround.data(), read.frames, read.layout);
             m_currentAudioSample = read.firstSample + read.frames;
             const size_t sampleCount = read.frames * read.layout.channelCount;
             const SurroundAudioBlockView surroundBlock{
@@ -936,7 +943,7 @@ void EchoRadarApp::DSPLoop() {
                 m_latestRadarFrame.layout = read.layout;
                 m_latestRadarFrame.sampleRate = status.nativeSampleRate;
                 m_latestRadarFrame.streamGeneration = read.streamGeneration;
-                m_latestRadarFrame.status = status.nativeSampleRate == 48000
+                m_latestRadarFrame.status = status.sampleRate == 48000
                     ? RadarRuntimeStatus::UnsupportedLayout
                     : RadarRuntimeStatus::UnsupportedSampleRate;
             }
@@ -945,7 +952,7 @@ void EchoRadarApp::DSPLoop() {
                     surroundBlock.interleaved, read.frames, read.layout);
             }
 
-            if (captureRunning && eventModeEnabled && m_recognizer &&
+            if (captureRunning && m_recognizer &&
                 DownmixForRecognition(
                     surroundBlock.interleaved, read.frames, read.layout,
                     std::span<float>(stereo.data(), read.frames * 2u))) {
@@ -965,19 +972,15 @@ void EchoRadarApp::DSPLoop() {
                     m_recognizer.reset();
                 }
             }
-            if (captureRunning && eventModeEnabled &&
-                directionalRadarAvailable) {
+            if (captureRunning && directionalRadarAvailable) {
                 ProcessPendingRadarEvents();
-            } else if (captureRunning && eventModeEnabled &&
-                       !m_pendingEvents.empty()) {
+            } else if (captureRunning && !m_pendingEvents.empty()) {
                 // Recognition remains available on a stereo/resampled stream,
                 // but v2 must not manufacture directional event results from it.
                 FinalizePendingRadarEvents(
-                    status.nativeSampleRate == 48000
+                    status.sampleRate == 48000
                         ? RadarRuntimeStatus::UnsupportedLayout
                         : RadarRuntimeStatus::UnsupportedSampleRate);
-            } else if (!eventModeEnabled && !m_pendingEvents.empty()) {
-                FinalizePendingRadarEvents(RadarRuntimeStatus::MalformedInput);
             }
         }
         if (!captureRunning && !m_pendingEvents.empty()) {
@@ -995,8 +998,16 @@ void EchoRadarApp::DSPLoop() {
         }
 
         const auto now = std::chrono::steady_clock::now();
+        // WASAPI may stop delivering packets during silence. Expire both radar
+        // and model context so the last direction cannot remain frozen forever.
+        if (!stalled && now - lastAudio > std::chrono::milliseconds(250)) {
+            m_audioFresh = false;
+            ResetPipelines(read);
+            ClearLatestRadarFrame(RadarRuntimeStatus::WaitingForAudio);
+            stalled = true;
+        }
         if (now >= nextSnapshot) {
-            PublishSnapshot(status, m_audio->GetCurrentLevels());
+            PublishSnapshot(status, stalled ? AudioLevels{} : m_audio->GetCurrentLevels());
             nextSnapshot = now + std::chrono::milliseconds(33);
         }
         if (read.frames == 0) {

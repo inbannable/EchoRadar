@@ -103,9 +103,10 @@ ma_bool32 FindEndpointCallback(ma_context*, ma_device_type type,
 
     bool selected = false;
     if (match.selection == AudioEndpointSelection::Fixed) {
-        selected = (!match.requestedId.empty() && info.id == match.requestedId) ||
-            (!match.requestedName.empty() &&
-             Lower(info.name).find(Lower(match.requestedName)) != std::string::npos);
+        selected = !match.requestedId.empty()
+            ? info.id == match.requestedId
+            : (!match.requestedName.empty() &&
+               Lower(info.name).find(Lower(match.requestedName)) != std::string::npos);
     } else {
         selected = info.isDefault || !match.found;
     }
@@ -308,9 +309,9 @@ struct AudioCapture::Impl {
         nativeConfig.dataCallback = DataCallback;
         nativeConfig.stopCallback = StopCallback;
         nativeConfig.pUserData = this;
-        if (config.selection == AudioEndpointSelection::Fixed) {
-            nativeConfig.capture.pDeviceID = &endpointId;
-        }
+        // Open exactly the endpoint we inspected, even while following default.
+        // Otherwise a default-device change can pair PCM with another device mask.
+        nativeConfig.capture.pDeviceID = &endpointId;
 
         const ma_result initializeResult = ma_device_init(&context, &nativeConfig, &device);
         if (initializeResult != MA_SUCCESS) {
@@ -409,6 +410,15 @@ bool IsNativeDirectionalRadarFormat(
         nativeLayout->IsDirectional() && clientLayout == *nativeLayout;
 }
 
+bool IsDirectionalRadarFormat(const AudioCaptureStatus& status,
+                              const AudioChannelLayout& clientLayout) noexcept {
+    const auto native = MakeAudioChannelLayout(status.nativeChannels,
+                                               status.nativeChannelMask);
+    return status.sampleRate == 48000 && status.nativeSampleRate >= 8000 &&
+        status.nativeSampleRate <= 192000 && native && native->IsDirectional() &&
+        clientLayout == *native;
+}
+
 bool AudioCapture::Start(const AudioCaptureConfig& config) {
     return StartInternal(config);
 }
@@ -490,13 +500,21 @@ void AudioCapture::Poll() {
 
     const auto now = std::chrono::steady_clock::now();
     if (m_impl->state.load(std::memory_order_acquire) == AudioCaptureState::Running &&
-        m_impl->config.selection == AudioEndpointSelection::FollowDefault &&
         now >= m_impl->nextEndpointPoll) {
         ma_device_id ignored{};
         AudioDeviceInfo currentDefault;
         const bool found = FindEndpoint(m_impl->context, m_impl->config, ignored, currentDefault);
         AudioCaptureStatus status = GetStatus();
-        if (!found || currentDefault.id != status.endpointId) {
+        bool formatChanged = false;
+#ifdef _WIN32
+        WasapiEndpointFormat format;
+        if (found && QueryWasapiEndpointFormat(ignored.wasapi, format)) {
+            formatChanged = format.channelCount != status.nativeChannels ||
+                format.sampleRate != status.nativeSampleRate ||
+                format.channelMask != status.nativeChannelMask;
+        }
+#endif
+        if (!found || currentDefault.id != status.endpointId || formatChanged) {
             m_impl->CloseDevice();
             std::string error;
             if (!m_impl->OpenDevice(true, error)) m_impl->EnterRecovery(std::move(error));
@@ -598,9 +616,11 @@ AudioReadResult AudioCapture::Read(float* destination, size_t frameCount) {
         std::lock_guard<std::mutex> lock(m_impl->statusMutex);
         result.layout = m_impl->activeLayout;
     }
-    m_impl->pendingDiscontinuity = false;
-    m_impl->pendingLayoutChange = false;
     result.frames = m_impl->ring->PopInterleaved(destination, frameCount);
+    if (result.frames != 0) {
+        m_impl->pendingDiscontinuity = false;
+        m_impl->pendingLayoutChange = false;
+    }
     m_impl->nextReadSample += result.frames;
     return result;
 }

@@ -79,6 +79,8 @@ private:
     std::deque<PendingRadarEvent> m_pendingEvents;
     std::vector<RecentEventSnapshot> m_recentEvents;
     RadarFrame m_latestRadarFrame{};
+    SignalActivity m_signalActivity;
+    bool m_audioFresh{false};
     AudioChannelLayout m_currentLayout{};
     uint64_t m_currentGeneration{0};
     uint64_t m_currentAudioSample{0};

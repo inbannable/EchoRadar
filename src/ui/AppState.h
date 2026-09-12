@@ -3,6 +3,7 @@
 #include <audio/AudioCapture.h>
 #include <audio/AudioDeviceInfo.h>
 #include <audio/AudioTypes.h>
+#include <audio/SignalActivity.h>
 #include <radar/RadarTypes.h>
 #include <recognition/RecognitionTypes.h>
 #include <recognition/RecognitionRuntimeConfig.h>
@@ -63,6 +64,9 @@ struct CaptureSnapshot {
     std::string endpointName;
     uint32_t sampleRate{0};
     AudioLevels levels{};
+    bool audioFresh{false};
+    SignalActivitySnapshot signal{};
+    uint32_t processingSampleRate{48000};
     uint64_t streamGeneration{0};
     uint64_t streamSample{0};
     uint64_t droppedFrames{0};
@@ -88,6 +92,9 @@ struct ModelSnapshot {
     std::string name;
     std::string version;
     std::string statusText;
+    uint64_t inferenceCount{0};
+    uint64_t suppressedEvents{0};
+    std::array<float, kSoundClassCount> probabilities{};
 };
 
 struct HudSnapshot {
@@ -122,6 +129,7 @@ struct RecentEventSnapshot {
     SoundClass soundClass{SoundClass::Gunshot};
     float confidence{0.0f};
     bool suppressed{false};
+    bool liveMarkerEligible{true};
     float strongestAzimuthDegrees{0.0f};
     std::array<float, kRadarSectorCount> miniatureRadarDbfs{};
     uint32_t peakCount{0};
@@ -160,7 +168,7 @@ public:
     std::shared_ptr<const AppSnapshot> Latest() const noexcept;
 
 private:
-    std::atomic<std::shared_ptr<const AppSnapshot>> m_latest;
+    std::shared_ptr<const AppSnapshot> m_latest;
 };
 
 using AppSnapshotPublisher = LatestSnapshotPublisher;
@@ -276,6 +284,7 @@ enum class SetupEvent : uint8_t {
     Back,
     Retry,
     Reset,
+    HeadphoneFormatSupported,
 };
 
 struct ApplySetupEventCommand {

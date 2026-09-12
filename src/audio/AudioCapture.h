@@ -72,6 +72,10 @@ bool IsNativeDirectionalRadarFormat(
     const AudioCaptureStatus& status,
     const AudioChannelLayout& clientLayout) noexcept;
 
+// Rate conversion is allowed; channel conversion is never evidence of direction.
+bool IsDirectionalRadarFormat(const AudioCaptureStatus& status,
+                              const AudioChannelLayout& clientLayout) noexcept;
+
 /// Pull-based 48 kHz native-layout Windows WASAPI loopback capture.
 class AudioCapture {
 public:

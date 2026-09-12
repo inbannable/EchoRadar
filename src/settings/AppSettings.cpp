@@ -112,6 +112,7 @@ const char* SetupStepName(SetupStep value) {
 }
 
 SetupSupportState ParseSetupSupport(const std::string& value) {
+    if (value == "headphone-stereo") return SetupSupportState::HeadphoneStereo;
     if (value == "supported") return SetupSupportState::Supported;
     if (value == "no-endpoint") return SetupSupportState::NoEndpoint;
     if (value == "unsupported-stereo") {
@@ -131,6 +132,7 @@ const char* SetupSupportName(SetupSupportState value) {
     switch (value) {
     case SetupSupportState::Unknown: return "unknown";
     case SetupSupportState::Supported: return "supported";
+    case SetupSupportState::HeadphoneStereo: return "headphone-stereo";
     case SetupSupportState::NoEndpoint: return "no-endpoint";
     case SetupSupportState::UnsupportedStereo: return "unsupported-stereo";
     case SetupSupportState::UnsupportedSampleRate:
@@ -247,7 +249,8 @@ void NormalizeOnboarding(OnboardingSettings& setup) {
         setup.hudPreviewed = true;
         setup.completed = true;
         setup.step = SetupStep::Complete;
-        setup.supportState = SetupSupportState::Supported;
+        if (setup.supportState != SetupSupportState::HeadphoneStereo)
+            setup.supportState = SetupSupportState::Supported;
         return;
     }
     if (!setup.endpointSelected) {

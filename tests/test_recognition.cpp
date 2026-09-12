@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <limits>
 #include <vector>
 
 using namespace EchoRadar;
@@ -337,4 +338,35 @@ TEST(RecognitionModelPackage, ValidatesExportContractAndChecksum) {
     EXPECT_FALSE(RecognitionModelPackage::Load(root, package, &error));
     EXPECT_NE(error.find("SHA-256"), std::string::npos);
     fs::remove_all(root);
+}
+
+TEST(SoundRecognizerContinuity, ResetsOnGenerationAndSampleGaps) {
+    auto model = std::make_shared<CapturingRecognitionModel>();
+    SoundRecognizer recognizer(model, TestPackage());
+    const auto pcm = DirectionalSine(4096);
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 10000, 7});
+    EXPECT_EQ(recognizer.StreamGeneration(), 7u);
+    EXPECT_EQ(recognizer.Stats().processedPcmFrames, 4096u);
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 14096, 7});
+    EXPECT_EQ(recognizer.Stats().processedPcmFrames, 8192u);
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 30000, 7});
+    EXPECT_EQ(recognizer.Stats().processedPcmFrames, 4096u);
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 0, 8});
+    EXPECT_EQ(recognizer.StreamGeneration(), 8u);
+    EXPECT_EQ(recognizer.Stats().processedPcmFrames, 4096u);
+}
+
+TEST(SoundRecognizerContinuity, InvalidProbabilitiesCannotEmitEvents) {
+    auto invalid = Output(std::numeric_limits<float>::quiet_NaN(), 0.0f);
+    auto model = std::make_shared<CapturingRecognitionModel>(
+        std::vector<RecognitionModelOutput>{invalid, Output(0.99f, 0.99f)});
+    size_t delivered = 0;
+    SoundRecognizer recognizer(model, TestPackage(), [&](const SoundEvent&) { ++delivered; });
+    const auto pcm = DirectionalSine(4096);
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 0, 1});
+    recognizer.Flush();
+    EXPECT_FALSE(recognizer.LastError().empty());
+    recognizer.OnAudio({pcm, 4096, 48000, 2, 4096, 1});
+    EXPECT_EQ(model->callCount, 1u);
+    EXPECT_EQ(delivered, 0u);
 }

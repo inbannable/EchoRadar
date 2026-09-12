@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ECHORADAR_BUILD_APP "Build the Windows EchoRadar application" ON)
 option(ECHORADAR_BUILD_AUDIO_MONITOR "Build the Windows loopback audio monitor" ON)
+option(ECHORADAR_BUILD_UI_PREVIEW "Build portable dashboard visual QA tool" OFF)
 option(ECHORADAR_BUILD_TESTS "Build automated tests" OFF)
 option(ECHORADAR_ENABLE_ONNX "Enable ONNX Runtime inference" OFF)
 option(ECHORADAR_BUILD_STEAM_AUDIO_RENDERER
@@ -73,7 +74,7 @@ if(ECHORADAR_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-if(WIN32 AND ECHORADAR_BUILD_APP)
+if((WIN32 AND ECHORADAR_BUILD_APP) OR ECHORADAR_BUILD_UI_PREVIEW)
     FetchContent_Declare(
         imgui
         GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -81,17 +82,21 @@ if(WIN32 AND ECHORADAR_BUILD_APP)
         GIT_SHALLOW TRUE
     )
     FetchContent_MakeAvailable(imgui)
-    add_library(imgui_dx11 STATIC
+    add_library(imgui_core STATIC
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    target_include_directories(imgui_core PUBLIC ${imgui_SOURCE_DIR})
+endif()
+if(WIN32 AND ECHORADAR_BUILD_APP)
+    add_library(imgui_dx11 STATIC
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp)
     target_include_directories(imgui_dx11 PUBLIC
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends)
-    target_link_libraries(imgui_dx11 PUBLIC d3d11 d3dcompiler dxgi)
+    target_link_libraries(imgui_dx11 PUBLIC imgui_core d3d11 d3dcompiler dxgi)
 elseif(ECHORADAR_BUILD_APP AND NOT WIN32)
     message(STATUS "EchoRadar application is Windows-only; building supported libraries instead")
 endif()
@@ -106,4 +111,7 @@ endif()
 if((WIN32 AND ECHORADAR_BUILD_AUDIO_MONITOR) OR
    ECHORADAR_BUILD_STEAM_AUDIO_RENDERER)
     add_subdirectory(tools)
+endif()
+if(ECHORADAR_BUILD_UI_PREVIEW)
+    add_subdirectory(tools/ui_preview)
 endif()

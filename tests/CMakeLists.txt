@@ -1,4 +1,5 @@
 add_executable(echoradar_tests
+    test_signal_activity.cpp
     test_audio_ring_buffer.cpp
     test_audio_history_buffer.cpp
     test_surround_audio.cpp

@@ -45,12 +45,12 @@ void LatestSnapshotPublisher::Publish(AppSnapshot snapshot) {
 void LatestSnapshotPublisher::Publish(
     std::shared_ptr<const AppSnapshot> snapshot) {
     if (!snapshot) snapshot = std::make_shared<const AppSnapshot>();
-    m_latest.store(std::move(snapshot), std::memory_order_release);
+    std::atomic_store_explicit(&m_latest, std::move(snapshot), std::memory_order_release);
 }
 
 std::shared_ptr<const AppSnapshot>
 LatestSnapshotPublisher::Latest() const noexcept {
-    return m_latest.load(std::memory_order_acquire);
+    return std::atomic_load_explicit(&m_latest, std::memory_order_acquire);
 }
 
 void UiCommandQueue::Push(UiCommand command) {
@@ -104,10 +104,12 @@ SetupTransition ApplySetupEvent(OnboardingSettings state,
         break;
 
     case SetupEvent::FormatSupported:
+    case SetupEvent::HeadphoneFormatSupported:
         if (!state.endpointSelected) return Blocked(std::move(state));
         state.formatValidated = true;
         ClearAfterFormat(state);
-        state.supportState = SetupSupportState::Supported;
+        state.supportState = event == SetupEvent::HeadphoneFormatSupported
+            ? SetupSupportState::HeadphoneStereo : SetupSupportState::Supported;
         state.step = SetupStep::ConfirmChannels;
         break;
 
@@ -127,7 +129,8 @@ SetupTransition ApplySetupEvent(OnboardingSettings state,
 
     case SetupEvent::ChannelActivityConfirmed:
         if (!state.endpointSelected || !state.formatValidated ||
-            state.supportState != SetupSupportState::Supported) {
+            (state.supportState != SetupSupportState::Supported &&
+             state.supportState != SetupSupportState::HeadphoneStereo)) {
             return Blocked(std::move(state));
         }
         state.channelsConfirmed = true;
@@ -139,7 +142,8 @@ SetupTransition ApplySetupEvent(OnboardingSettings state,
     case SetupEvent::HudPreviewConfirmed:
         if (!state.endpointSelected || !state.formatValidated ||
             !state.channelsConfirmed ||
-            state.supportState != SetupSupportState::Supported) {
+            (state.supportState != SetupSupportState::Supported &&
+             state.supportState != SetupSupportState::HeadphoneStereo)) {
             return Blocked(std::move(state));
         }
         state.hudPreviewed = true;
@@ -214,7 +218,10 @@ SetupFeatureAvailability SetupAvailability(SetupSupportState state) {
         break;
     case SetupSupportState::Supported:
         result.explanation =
-            "Native 48 kHz surround audio is ready for directional radar.";
+            "Discrete surround channels are ready for directional radar.";
+        break;
+    case SetupSupportState::HeadphoneStereo:
+        result.explanation = "Headphone capture and recognition are ready; full azimuth is unavailable.";
         break;
     case SetupSupportState::NoEndpoint:
         result.shouldOfferSoundSettings = true;

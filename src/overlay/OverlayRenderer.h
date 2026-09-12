@@ -34,15 +34,18 @@ public:
     bool IsRunning() const { return m_running; }
 
     struct PlatformImpl;
+    // Platform-independent view, also rendered by the offline UI preview tool.
+    void DrawDashboard(const AppSnapshot& snapshot);
+    void SetPreviewPage(int page) { m_page = page >= 0 && page < 5 ? page : 0; }
 
 private:
     Config m_config;
     bool m_running{false};
+    int m_page{0};
     float m_appliedUiScale{1.0f};
     std::unique_ptr<PlatformImpl> m_platform;
 
     void ApplyUiScale(float scale);
-    void DrawDashboard(const AppSnapshot& snapshot);
     void DrawHeader(const AppSnapshot& snapshot);
     void DrawInlineStatus(const AppSnapshot& snapshot);
     void DrawRadarWorkspace(const AppSnapshot& snapshot);

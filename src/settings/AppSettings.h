@@ -70,6 +70,7 @@ enum class SetupSupportState : uint8_t {
     UnsupportedSampleRate,
     UnsupportedChannelMask,
     CaptureFailure,
+    HeadphoneStereo,
 };
 
 struct OnboardingSettings {

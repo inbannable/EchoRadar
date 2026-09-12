@@ -1,6 +1,7 @@
 add_library(echoradar_overlay STATIC
     HudOverlayRenderer.cpp
     HudOverlayRenderer.h
+    DashboardView.cpp
     OverlayRenderer.cpp
     OverlayRenderer.h
 )

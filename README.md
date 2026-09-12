@@ -1,15 +1,17 @@
 # EchoRadar v2
 
-EchoRadar v2 is Windows research software that turns native 48 kHz 5.1 or
-7.1 system-output audio into a 24-sector azimuth radar. It uses an original
+EchoRadar v2 is Windows research software that captures headphone playback
+audio and turns discrete 5.1/7.1 system-output audio into a 24-sector azimuth radar. It uses an original
 frequency-domain multichannel energy-vector implementation and a tactical-dark
 dashboard/HUD. It does not use ASUS code, assets, branding, or proprietary
 tuning, and it does not claim bit-for-bit compatibility with ASUS Sonic Radar.
 
-The v2 signal path is intentionally strict:
+The playback signal path preserves native channel roles:
 
 ```text
-Windows WASAPI loopback (48 kHz WAVEFORMATEXTENSIBLE 5.1/7.1)
+Windows WASAPI loopback (stereo or WAVEFORMATEXTENSIBLE 5.1/7.1)
+  -> 48 kHz analysis PCM, retaining the endpoint channel map
+  +-> independent audio activity / headphone left-right energy monitor
   +-> 2048-sample Hann STFT / 480-sample hop
   |    -> per-bin multichannel energy vector
   |    -> 24 azimuth sectors + smoothing -> dashboard and HUD
@@ -17,8 +19,9 @@ Windows WASAPI loopback (48 kHz WAVEFORMATEXTENSIBLE 5.1/7.1)
        -> optional event-window radar peaks
 ```
 
-Stereo and 44.1 kHz endpoints remain visible in setup, but directional radar
-is explicitly disabled for them. EchoRadar v2 never invents surround bearings
+Stereo headphones support capture, activity monitoring, and optional event
+recognition. Full azimuth requires discrete 5.1/7.1 channels; sample-rate
+conversion is allowed when the channel-role map is preserved. EchoRadar v2 never invents surround bearings
 from stereo. The frozen v1 implementation remains at branch
 `codex/v1-maintenance` and annotated tag `echoradar-v1.0.0`.
 
@@ -36,8 +39,8 @@ from stereo. The frozen v1 implementation remains at branch
   keyboard-navigable dashboard, and a click-through/editable per-display HUD.
 - Settings schema 4 under `%LOCALAPPDATA%\EchoRadar\v2` and JSONL schema 3
   session records.
-- Optional existing `stereo-onset-v4` recognition packages. Continuous radar
-  needs no model.
+- Optional existing `stereo-onset-v4` recognition packages run in every radar
+  display mode. Audio activity and continuous surround radar need no model.
 
 ## Build
 
@@ -86,7 +89,8 @@ EchoRadar reports azimuth only. Sector peaks are energy maxima, not proof of
 separate physical sources. Opposing sounds with energy in the same frequency
 bins can cancel in an energy vector. Room reflections, game mixing, endpoint
 processing, virtual-surround drivers, and incorrect Windows speaker masks can
-reduce accuracy. Native 48 kHz 5.1/7.1 output is the supported v2 contract.
+reduce accuracy. Discrete 5.1/7.1 channel roles are required for full azimuth. Stereo energy
+balance cannot distinguish front from rear.
 
 The automated suite covers channel mapping, buffering/downmix, radar bearings,
 interpolation, presets, smoothing, cancellation, state transfer, settings, and
@@ -108,3 +112,6 @@ third-party patents. See [NOTICE](NOTICE) and
 Local `sounds/`, `models/`, `recordings/`, generated corpora, runs, caches, and
 checkpoints are ignored and must not be redistributed without appropriate
 rights.
+
+The headphone investigation, implemented changes, remaining full-spatial work,
+and real-device checklist are in [audio/headphone refactor](docs/audio-headphone-refactor.md).

@@ -56,6 +56,7 @@ std::vector<SoundEvent>
 SoundRecognizer::PushInterleaved(const float* stereoSamples, size_t frameCount) {
     ApplyRuntimeTuning();
     std::vector<SoundEvent> events;
+    if (!m_lastError.empty()) return events;
     m_features.PushInterleaved(stereoSamples, frameCount);
     m_stats.processedPcmFrames += frameCount;
 
@@ -69,6 +70,7 @@ SoundRecognizer::PushInterleaved(const float* stereoSamples, size_t frameCount) 
         while (m_context.size() > m_package.contextFrames) m_context.pop_front();
         if ((m_featureCount - 1) % m_package.inferenceStrideFrames == 0) {
             RunInference(frame, events);
+            if (!m_lastError.empty()) break;
         }
     }
     Publish(events);
@@ -113,7 +115,22 @@ void SoundRecognizer::RunInference(const StereoOnsetFeatureFrame& frame,
                  static_cast<size_t>(m_inferenceTimeCount * 0.95));
     m_stats.p95InferenceMs = ordered[percentile];
     m_lastInferenceFeatureCount = m_featureCount;
-    if (!predicted) return;
+    if (!predicted) {
+        if (m_lastError.empty()) m_lastError = "Recognition inference failed";
+        return;
+    }
+    const auto validProbability = [](float value) {
+        return std::isfinite(value) && value >= 0.0f && value <= 1.0f;
+    };
+    for (size_t index = 0; index < kSoundClassCount; ++index) {
+        if (!validProbability(output.onsetProbabilities[index]) ||
+            !std::all_of(output.sourceProbabilities[index].begin(),
+                         output.sourceProbabilities[index].end(), validProbability)) {
+            m_lastError = "Recognition returned invalid probabilities";
+            return;
+        }
+    }
+    m_lastError.clear();
 
     m_lastOutput = output;
     const uint64_t absoluteEndSample = m_sampleBase + frame.endSample;
@@ -250,8 +267,10 @@ void SoundRecognizer::ProcessReadyPeaks(std::vector<SoundEvent>& events, bool fl
 
 std::vector<SoundEvent> SoundRecognizer::Flush() {
     std::vector<SoundEvent> events;
+    if (!m_lastError.empty()) return events;
     if (m_haveLastFeature && m_lastInferenceFeatureCount != m_featureCount) {
         RunInference(m_lastFeature, events);
+        if (!m_lastError.empty()) return events;
     }
     ProcessReadyPeaks(events, true);
     Publish(events);
@@ -279,6 +298,7 @@ void SoundRecognizer::Reset() {
     m_latestTraceSample = 0;
     m_sampleBase = 0;
     m_haveSampleBase = false;
+    m_expectedSample = 0;
     m_pending = {};
     m_inferenceTimes = {};
     m_inferenceTimeCount = 0;
@@ -294,10 +314,16 @@ void SoundRecognizer::OnAudio(const AudioBlockView& block) {
         m_lastError = "SoundRecognizer requires 48 kHz interleaved stereo PCM";
         return;
     }
+    if (block.frameCount == 0) return;
+    if (block.streamGeneration != m_streamGeneration ||
+        (m_haveSampleBase && block.firstSample != m_expectedSample)) {
+        OnStreamReset(block.streamGeneration);
+    }
     if (!m_haveSampleBase) {
         m_sampleBase = block.firstSample;
         m_haveSampleBase = true;
     }
+    m_expectedSample = block.firstSample + block.frameCount;
     PushInterleaved(block.interleaved.data(), block.frameCount);
 }
 
