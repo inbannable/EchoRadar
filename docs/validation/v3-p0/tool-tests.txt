@@ -1,0 +1,18 @@
+test_time_ablation_rejects_short_transient_without_inventing_confidence (test_p0.BaselineTests.test_time_ablation_rejects_short_transient_without_inventing_confidence) ... ok
+test_duplicate_predictions_are_false_positive_and_abstention_costs_coverage (test_p0.EvidenceTests.test_duplicate_predictions_are_false_positive_and_abstention_costs_coverage) ... ok
+test_empty_predictions_keep_false_negatives_and_missing_measurements (test_p0.EvidenceTests.test_empty_predictions_keep_false_negatives_and_missing_measurements) ... ok
+test_extensible_mask_preserved (test_p0.EvidenceTests.test_extensible_mask_preserved) ... ok
+test_manifest_rejects_generated_and_map_leakage (test_p0.EvidenceTests.test_manifest_rejects_generated_and_map_leakage) ... ok
+test_maximum_matching_avoids_greedy_loss (test_p0.EvidenceTests.test_maximum_matching_avoids_greedy_loss) ... ok
+test_misaligned_latency_cannot_improve_p95 (test_p0.EvidenceTests.test_misaligned_latency_cannot_improve_p95) ... ok
+test_outputs_cannot_overwrite_assets (test_p0.EvidenceTests.test_outputs_cannot_overwrite_assets) ... ok
+test_predictions_reject_nonfinite_confidence_and_missing_rejection (test_p0.EvidenceTests.test_predictions_reject_nonfinite_confidence_and_missing_rejection) ... ok
+test_silence_rank_is_zero_and_never_proves_surround (test_p0.EvidenceTests.test_silence_rank_is_zero_and_never_proves_surround) ... ok
+test_lfe_ignored_and_stereo_rejected (test_p0.ProbeTests.test_lfe_ignored_and_stereo_rejected) ... ok
+test_opposite_different_frequencies_keep_two_peaks (test_p0.ProbeTests.test_opposite_different_frequencies_keep_two_peaks) ... ok
+test_stereo_silence_abstains_and_prefix_is_causal (test_p0.ProbeTests.test_stereo_silence_abstains_and_prefix_is_causal) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.066s
+
+OK

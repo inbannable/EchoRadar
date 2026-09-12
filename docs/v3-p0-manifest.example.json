@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "sessions": [
+    {
+      "id": "replace-session-id",
+      "source": "unverified",
+      "reviewed": false,
+      "split": "dev",
+      "map": "replace-map",
+      "recording_session": "replace-physical-recording-session-id",
+      "wav": "replace-relative-path.wav",
+      "sha256": "replace-with-file-sha256",
+      "roles": ["FL", "FR"],
+      "endpoint": "replace-with-captured-endpoint-id",
+      "audio_settings": {
+        "cs2_build": "record actual value",
+        "cs2_audio": "record all audio settings",
+        "windows_spatial_audio": "record actual value",
+        "driver_enhancements": "record actual value",
+        "driver_version": "record actual value"
+      },
+      "conditions": ["replace-material-weapon-distance-occlusion-reverb-self-voice-overlap-turning"],
+      "events": [
+        {
+          "id": "replace-event-id",
+          "class": "footstep",
+          "onset_ms": 1000,
+          "localizable": true,
+          "azimuth_deg": 0
+        }
+      ]
+    }
+  ]
+}

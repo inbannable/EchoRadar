@@ -1,0 +1,5 @@
+Output endpoints (4):
+  ma:a1a86832f7803d6a  耳机 (Senary Audio)  <default>  2ch@48000 stereo [front-left,front-right]
+  ma:083bdf64699e7867  CABLE In 16ch (VB-Audio Virtual Cable)  2ch@48000 stereo [front-left,front-right]
+  ma:ff812e4fce707c54  CABLE Input (VB-Audio Virtual Cable)  8ch@48000 7.1 [front-left,front-right,front-center,lfe,back-left,back-right,side-left,side-right]
+  ma:2313058de820e057  扬声器 (Senary Audio)  2ch@48000 stereo [front-left,front-right]

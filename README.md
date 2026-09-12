@@ -1,5 +1,13 @@
 # EchoRadar v2
 
+> **v3 work branch — P0 remains open.** The application below is the archived
+> v2 implementation, not a completed v3 product. Read the complete
+> [v3 requirements](docs/v3-plan.md), [Sonic Radar analysis and source boundaries](docs/sonic-radar-analysis.md),
+> [v2 archive evidence](docs/v2-archive.md), and [P0 status / recording workflow](docs/v3-p0-status.md).
+> ASUS public features and the A-VOLUTE algorithm reference do not establish
+> ASUS internals or CS2 accuracy. EchoRadar's proposed binaural estimation and
+> event rules remain unverified until independently evaluated on real CS2 data.
+
 EchoRadar v2 is Windows research software that captures headphone playback
 audio and turns discrete 5.1/7.1 system-output audio into a 24-sector azimuth radar. It uses an original
 frequency-domain multichannel energy-vector implementation and a tactical-dark

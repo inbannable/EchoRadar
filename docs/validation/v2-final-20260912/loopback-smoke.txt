@@ -1,0 +1,8 @@
+EchoRadar audio monitor; Ctrl+C to stop
+state=Running endpoint=耳机 (Senary Audio) L=0.000 R=0.000 buffered=0 dropped=0 discarded=0 generation=1
+state=Running endpoint=耳机 (Senary Audio) L=0.000 R=0.000 buffered=480 dropped=0 discarded=0 generation=1
+state=Running endpoint=耳机 (Senary Audio) L=0.000 R=0.000 buffered=0 dropped=0 discarded=0 generation=1
+state=Running endpoint=耳机 (Senary Audio) L=0.000 R=0.000 buffered=0 dropped=0 discarded=0 generation=1
+state=Running endpoint=耳机 (Senary Audio) L=0.000 R=0.000 buffered=0 dropped=0 discarded=0 generation=1
+
+Stopped.

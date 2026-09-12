@@ -1,0 +1,27 @@
+[
+  {
+    "file": "model.json",
+    "sha256": "de9ec4aad44b99f91ab09224a193a9a1e8e1fd895a9d1a8b59bc91f5deb69f99",
+    "bytes": 1104
+  },
+  {
+    "file": "onnx_parity.npz",
+    "sha256": "8f263ef38b6be1dda337489fbddd295cd2d66c259d8d22fb5946351d4dbd9840",
+    "bytes": 4565
+  },
+  {
+    "file": "recognizer.onnx",
+    "sha256": "9b6a9f83784382c216922a19ae945b2da197884f1263ed2cc07ccd00daa70ad3",
+    "bytes": 414150
+  },
+  {
+    "file": "training-checkpoint.pt",
+    "sha256": "0defbef65b8c55d6eb4fe0978e15afd4809a4a98fa84f35e38aca3c6eb721e6d",
+    "bytes": 1190461
+  },
+  {
+    "file": "training-summary.json",
+    "sha256": "603ff0156a402618c78916623abf0566e516d9c9a54700ab4f1fe704755c79b8",
+    "bytes": 776
+  }
+]

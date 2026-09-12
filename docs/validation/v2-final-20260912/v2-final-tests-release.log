@@ -1,0 +1,191 @@
+Test project Z:/CODE/EchoRadar/build
+      Start  1: SignalActivity.HeadphoneEnergyIsNotAnAzimuthOrSemanticEvent
+ 1/93 Test  #1: SignalActivity.HeadphoneEnergyIsNotAnAzimuthOrSemanticEvent ......................   Passed    0.03 sec
+      Start  2: SignalActivity.HoldsAcrossShortSilenceThenReleasesAndResets
+ 2/93 Test  #2: SignalActivity.HoldsAcrossShortSilenceThenReleasesAndResets ......................   Passed    0.03 sec
+      Start  3: SignalActivity.LfeActivityIsVisibleWithoutClaimingStereoDirection
+ 3/93 Test  #3: SignalActivity.LfeActivityIsVisibleWithoutClaimingStereoDirection ................   Passed    0.03 sec
+      Start  4: AudioRingBuffer.CapacityRoundsUpToPowerOfTwo
+ 4/93 Test  #4: AudioRingBuffer.CapacityRoundsUpToPowerOfTwo .....................................   Passed    0.03 sec
+      Start  5: AudioRingBuffer.MinimumCapacityIsTwoFrames
+ 5/93 Test  #5: AudioRingBuffer.MinimumCapacityIsTwoFrames .......................................   Passed    0.03 sec
+      Start  6: AudioRingBuffer.EmptyBufferReturnsZero
+ 6/93 Test  #6: AudioRingBuffer.EmptyBufferReturnsZero ...........................................   Passed    0.03 sec
+      Start  7: AudioRingBuffer.BasicPushPop
+ 7/93 Test  #7: AudioRingBuffer.BasicPushPop .....................................................   Passed    0.03 sec
+      Start  8: AudioRingBuffer.PartialPop
+ 8/93 Test  #8: AudioRingBuffer.PartialPop .......................................................   Passed    0.03 sec
+      Start  9: AudioRingBuffer.WrapAround
+ 9/93 Test  #9: AudioRingBuffer.WrapAround .......................................................   Passed    0.03 sec
+      Start 10: AudioRingBuffer.FullDropsNewest
+10/93 Test #10: AudioRingBuffer.FullDropsNewest ..................................................   Passed    0.03 sec
+      Start 11: AudioRingBuffer.Clear
+11/93 Test #11: AudioRingBuffer.Clear ............................................................   Passed    0.03 sec
+      Start 12: AudioRingBuffer.DiscardOldestKeepsNewestFrames
+12/93 Test #12: AudioRingBuffer.DiscardOldestKeepsNewestFrames ...................................   Passed    0.03 sec
+      Start 13: AudioRingBuffer.MultipleWrapArounds
+13/93 Test #13: AudioRingBuffer.MultipleWrapArounds ..............................................   Passed    0.03 sec
+      Start 14: AudioRingBuffer.ThreadSafetySPSC
+14/93 Test #14: AudioRingBuffer.ThreadSafetySPSC .................................................   Passed    0.03 sec
+      Start 15: AudioLevelsMath.ConstantSignalRmsEqualsPeak
+15/93 Test #15: AudioLevelsMath.ConstantSignalRmsEqualsPeak ......................................   Passed    0.03 sec
+      Start 16: AudioLevelsMath.SineWaveRmsApprox
+16/93 Test #16: AudioLevelsMath.SineWaveRmsApprox ................................................   Passed    0.03 sec
+      Start 17: AudioLevelsMath.SilenceIsZero
+17/93 Test #17: AudioLevelsMath.SilenceIsZero ....................................................   Passed    0.03 sec
+      Start 18: AudioHistoryBuffer.ExtractWindowBySampleRange
+18/93 Test #18: AudioHistoryBuffer.ExtractWindowBySampleRange ....................................   Passed    0.03 sec
+      Start 19: AudioHistoryBuffer.KeepsMostRecentFramesWhenOverflowing
+19/93 Test #19: AudioHistoryBuffer.KeepsMostRecentFramesWhenOverflowing ..........................   Passed    0.03 sec
+      Start 20: AudioHistoryBuffer.ExtractWindowByTimeUsesPreAndPost
+20/93 Test #20: AudioHistoryBuffer.ExtractWindowByTimeUsesPreAndPost .............................   Passed    0.03 sec
+      Start 21: SurroundAudioLayout.ValidatesWindowsSpeakerMasksExactly
+21/93 Test #21: SurroundAudioLayout.ValidatesWindowsSpeakerMasksExactly ..........................   Passed    0.03 sec
+      Start 22: SurroundAudioLayout.MapsFivePointOneBackInSpeakerBitOrder
+22/93 Test #22: SurroundAudioLayout.MapsFivePointOneBackInSpeakerBitOrder ........................   Passed    0.03 sec
+      Start 23: SurroundAudioLayout.MapsFivePointOneSideSurroundsToPlusMinus110
+23/93 Test #23: SurroundAudioLayout.MapsFivePointOneSideSurroundsToPlusMinus110 ..................   Passed    0.03 sec
+      Start 24: SurroundAudioLayout.MapsSevenPointOneSidesAndBacks
+24/93 Test #24: SurroundAudioLayout.MapsSevenPointOneSidesAndBacks ...............................   Passed    0.03 sec
+      Start 25: SurroundAudioLayout.NativeRadarEligibilityRejectsConversionAndUnsupportedRates
+25/93 Test #25: SurroundAudioLayout.NativeRadarEligibilityRejectsConversionAndUnsupportedRates ...   Passed    0.03 sec
+      Start 26: SurroundAudioLayout.ResamplingPreservesDirectionButUpmixDoesNot
+26/93 Test #26: SurroundAudioLayout.ResamplingPreservesDirectionButUpmixDoesNot ..................   Passed    0.03 sec
+      Start 27: SurroundRecognitionDownmix.AttenuatesCenterAndSurrounds
+27/93 Test #27: SurroundRecognitionDownmix.AttenuatesCenterAndSurrounds ..........................   Passed    0.03 sec
+      Start 28: SurroundRecognitionDownmix.BoundsCoherentFullScaleMix
+28/93 Test #28: SurroundRecognitionDownmix.BoundsCoherentFullScaleMix ............................   Passed    0.03 sec
+      Start 29: SurroundRecognitionDownmix.ExcludesLfeCompletely
+29/93 Test #29: SurroundRecognitionDownmix.ExcludesLfeCompletely .................................   Passed    0.03 sec
+      Start 30: SurroundAudioRingBuffer.PreservesSixChannelFramesAcrossWrap
+30/93 Test #30: SurroundAudioRingBuffer.PreservesSixChannelFramesAcrossWrap ......................   Passed    0.03 sec
+      Start 31: SurroundAudioHistoryBuffer.ExtractsEightChannelTimeline
+31/93 Test #31: SurroundAudioHistoryBuffer.ExtractsEightChannelTimeline ..........................   Passed    0.03 sec
+      Start 32: SurroundPcmWav.RoundTripsExtensibleFivePointOneMask
+32/93 Test #32: SurroundPcmWav.RoundTripsExtensibleFivePointOneMask ..............................   Passed    0.04 sec
+      Start 33: Pcm16WavWriter.IncrementallyRoundTripsSevenPointOne
+33/93 Test #33: Pcm16WavWriter.IncrementallyRoundTripsSevenPointOne ..............................   Passed    0.04 sec
+      Start 34: Pcm16WavWriter.DestructorFinalizesExtensibleHeader
+34/93 Test #34: Pcm16WavWriter.DestructorFinalizesExtensibleHeader ...............................   Passed    0.05 sec
+      Start 35: Pcm16WavWriter.EnforcesFrameLimitAndStillFinalizesWrittenPrefix
+35/93 Test #35: Pcm16WavWriter.EnforcesFrameLimitAndStillFinalizesWrittenPrefix ..................   Passed    0.04 sec
+      Start 36: Pcm16WavWriter.RejectsMisalignedWritesAndMissingSurroundMask
+36/93 Test #36: Pcm16WavWriter.RejectsMisalignedWritesAndMissingSurroundMask .....................   Passed    0.03 sec
+      Start 37: STFTProcessor.ConstructDefault
+37/93 Test #37: STFTProcessor.ConstructDefault ...................................................   Passed    0.03 sec
+      Start 38: STFTProcessor.InvalidFFTSize
+38/93 Test #38: STFTProcessor.InvalidFFTSize .....................................................   Passed    0.03 sec
+      Start 39: STFTProcessor.BinToHz
+39/93 Test #39: STFTProcessor.BinToHz ............................................................   Passed    0.03 sec
+      Start 40: STFTProcessor.StreamingFrameAndHopBehavior
+40/93 Test #40: STFTProcessor.StreamingFrameAndHopBehavior .......................................   Passed    0.03 sec
+      Start 41: STFTProcessor.StereoDeinterleaveChannelIsolation
+41/93 Test #41: STFTProcessor.StereoDeinterleaveChannelIsolation .................................   Passed    0.03 sec
+      Start 42: STFTProcessor.PureTonePeakBinAndStereoSeparation
+42/93 Test #42: STFTProcessor.PureTonePeakBinAndStereoSeparation .................................   Passed    0.03 sec
+      Start 43: WindowFunctions.HannWindowBasicProperties
+43/93 Test #43: WindowFunctions.HannWindowBasicProperties ........................................   Passed    0.03 sec
+      Start 44: SupportUtilities.ComputesStandardSha256Vector
+44/93 Test #44: SupportUtilities.ComputesStandardSha256Vector ....................................   Passed    0.03 sec
+      Start 45: SupportUtilities.ParsesEscapedFlatJsonValues
+45/93 Test #45: SupportUtilities.ParsesEscapedFlatJsonValues .....................................   Passed    0.03 sec
+      Start 46: PcmWav.RoundTripsStereoPcm16
+46/93 Test #46: PcmWav.RoundTripsStereoPcm16 .....................................................   Passed    0.04 sec
+      Start 47: PcmWav.RejectsUnsupportedChannelCount
+47/93 Test #47: PcmWav.RejectsUnsupportedChannelCount ............................................   Passed    0.03 sec
+      Start 48: RecognitionFeatures.StreamingChunksMatchWholeInput
+48/93 Test #48: RecognitionFeatures.StreamingChunksMatchWholeInput ...............................   Passed    0.03 sec
+      Start 49: RecognitionFeatures.ChannelSwapHasExpectedSpatialSymmetry
+49/93 Test #49: RecognitionFeatures.ChannelSwapHasExpectedSpatialSymmetry ........................   Passed    0.03 sec
+      Start 50: RecognitionFeatures.MatchesPythonStereoOnsetGoldenVector
+50/93 Test #50: RecognitionFeatures.MatchesPythonStereoOnsetGoldenVector .........................   Passed    0.03 sec
+      Start 51: SoundRecognizer.LeftPadsStartupContextAndInfersFirstFeature
+51/93 Test #51: SoundRecognizer.LeftPadsStartupContextAndInfersFirstFeature ......................   Passed    0.03 sec
+      Start 52: SoundRecognizer.AppliesPeakSpacingAndCalibratedOnset
+52/93 Test #52: SoundRecognizer.AppliesPeakSpacingAndCalibratedOnset .............................   Passed    0.03 sec
+      Start 53: SoundRecognizer.AppliesRuntimeTuningOnNextAudioBlock
+53/93 Test #53: SoundRecognizer.AppliesRuntimeTuningOnNextAudioBlock .............................   Passed    0.03 sec
+      Start 54: SoundRecognizer.SuppressesSelfEventsFromRealtimeCallback
+54/93 Test #54: SoundRecognizer.SuppressesSelfEventsFromRealtimeCallback .........................   Passed    0.03 sec
+      Start 55: SoundRecognizer.FlushSupportsZeroLookaheadAndCarriesStreamGeneration
+55/93 Test #55: SoundRecognizer.FlushSupportsZeroLookaheadAndCarriesStreamGeneration .............   Passed    0.03 sec
+      Start 56: SoundRecognizer.OnAudioPreservesAbsoluteSampleTimeAfterLateEnable
+56/93 Test #56: SoundRecognizer.OnAudioPreservesAbsoluteSampleTimeAfterLateEnable ................   Passed    0.03 sec
+      Start 57: RecognitionModelPackage.ValidatesExportContractAndChecksum
+57/93 Test #57: RecognitionModelPackage.ValidatesExportContractAndChecksum .......................   Passed    0.04 sec
+      Start 58: SoundRecognizerContinuity.ResetsOnGenerationAndSampleGaps
+58/93 Test #58: SoundRecognizerContinuity.ResetsOnGenerationAndSampleGaps ........................   Passed    0.03 sec
+      Start 59: SoundRecognizerContinuity.InvalidProbabilitiesCannotEmitEvents
+59/93 Test #59: SoundRecognizerContinuity.InvalidProbabilitiesCannotEmitEvents ...................   Passed    0.03 sec
+      Start 60: RecognitionModelLocator.FindsLegacyV4PackageWhenCurrentPackageIsAbsent
+60/93 Test #60: RecognitionModelLocator.FindsLegacyV4PackageWhenCurrentPackageIsAbsent ...........   Passed    0.04 sec
+      Start 61: DirectionSceneCoordinatorTest.ClustersBoundaryOnceAndResetsOnDiscontinuity
+61/93 Test #61: DirectionSceneCoordinatorTest.ClustersBoundaryOnceAndResetsOnDiscontinuity .......   Passed    0.03 sec
+      Start 62: DirectionSceneCoordinatorTest.OutOfOrderEventMovesAnchorToEarliestOnset
+62/93 Test #62: DirectionSceneCoordinatorTest.OutOfOrderEventMovesAnchorToEarliestOnset ..........   Passed    0.03 sec
+      Start 63: DirectionSceneCoordinatorTest.OutOfOrderEventCannotWidenGroupPastJoinWindow
+63/93 Test #63: DirectionSceneCoordinatorTest.OutOfOrderEventCannotWidenGroupPastJoinWindow ......   Passed    0.03 sec
+      Start 64: DirectionOnnxEngineTest.PreservesFifteenDegreeSourcesAndFiltersGunshots
+64/93 Test #64: DirectionOnnxEngineTest.PreservesFifteenDegreeSourcesAndFiltersGunshots ..........   Passed    0.03 sec
+      Start 65: DirectionOnnxEngineTest.ExtractsExactlyFiveByFortyEightBySixtyFour
+65/93 Test #65: DirectionOnnxEngineTest.ExtractsExactlyFiveByFortyEightBySixtyFour ...............   Passed    0.09 sec
+      Start 66: DirectionModelPackageTest.ValidatesHashAndFlatContract
+66/93 Test #66: DirectionModelPackageTest.ValidatesHashAndFlatContract ...........................   Passed    0.03 sec
+      Start 67: AppSettings.RoundTripPreservesRuntimeSettings
+67/93 Test #67: AppSettings.RoundTripPreservesRuntimeSettings ....................................   Passed    0.03 sec
+      Start 68: AppSettings.MigratesSchemaTwoAndLeavesCalibrationDataUntouched
+68/93 Test #68: AppSettings.MigratesSchemaTwoAndLeavesCalibrationDataUntouched ...................   Passed    0.03 sec
+      Start 69: AppSettings.ClampsUnsafeValues
+69/93 Test #69: AppSettings.ClampsUnsafeValues ...................................................   Passed    0.03 sec
+      Start 70: V2AppSettings.DefaultsAndPathUseSchemaFourNamespace
+70/93 Test #70: V2AppSettings.DefaultsAndPathUseSchemaFourNamespace ..............................   Passed    0.03 sec
+      Start 71: V2AppSettings.MigratesSchemaThreeIntoV2Defaults
+71/93 Test #71: V2AppSettings.MigratesSchemaThreeIntoV2Defaults ..................................   Passed    0.04 sec
+      Start 72: V2AppSettings.RoundTripPreservesV2DashboardRadarOnboardingAndHud
+72/93 Test #72: V2AppSettings.RoundTripPreservesV2DashboardRadarOnboardingAndHud .................   Passed    0.04 sec
+      Start 73: V2AppSettings.ClampsRadarDashboardEventsAndHud
+73/93 Test #73: V2AppSettings.ClampsRadarDashboardEventsAndHud ...................................   Passed    0.03 sec
+      Start 74: V2AppSettings.PerDisplayCollectionIsBoundedAndUpdatesInPlace
+74/93 Test #74: V2AppSettings.PerDisplayCollectionIsBoundedAndUpdatesInPlace .....................   Passed    0.03 sec
+      Start 75: V2AppSettings.DebouncedSaverFlushesLatestGenerationOnShutdown
+75/93 Test #75: V2AppSettings.DebouncedSaverFlushesLatestGenerationOnShutdown ....................   Passed    0.04 sec
+      Start 76: V2AppSettings.HudBoundsStayInsideNegativeOriginWorkArea
+76/93 Test #76: V2AppSettings.HudBoundsStayInsideNegativeOriginWorkArea ..........................   Passed    0.03 sec
+      Start 77: V2UiState.PublishedSnapshotsAreImmutableAndDetachedFromProducer
+77/93 Test #77: V2UiState.PublishedSnapshotsAreImmutableAndDetachedFromProducer ..................   Passed    0.03 sec
+      Start 78: V2UiState.CommandQueueIsTypedFifoAndThreadSafe
+78/93 Test #78: V2UiState.CommandQueueIsTypedFifoAndThreadSafe ...................................   Passed    0.03 sec
+      Start 79: V2Setup.CompletesSupportedFlowAndCanResumeBackward
+79/93 Test #79: V2Setup.CompletesSupportedFlowAndCanResumeBackward ...............................   Passed    0.03 sec
+      Start 80: V2Setup.UnsupportedFormatsDisableOnlyDirectionalRadar
+80/93 Test #80: V2Setup.UnsupportedFormatsDisableOnlyDirectionalRadar ............................   Passed    0.03 sec
+      Start 81: V2Setup.HeadphonesCompleteSetupWithoutClaimingSurroundAndPersist
+81/93 Test #81: V2Setup.HeadphonesCompleteSetupWithoutClaimingSurroundAndPersist .................   Passed    0.03 sec
+      Start 82: RadarProcessorTest.ResolvesCardinalAndIntermediateBearings
+82/93 Test #82: RadarProcessorTest.ResolvesCardinalAndIntermediateBearings .......................   Passed    0.03 sec
+      Start 83: RadarProcessorTest.FollowsMirroredRoleOrderAndExcludesLfe
+83/93 Test #83: RadarProcessorTest.FollowsMirroredRoleOrderAndExcludesLfe ........................   Passed    0.03 sec
+      Start 84: RadarProcessorTest.ReportsSilenceUnsupportedAndMalformedInput
+84/93 Test #84: RadarProcessorTest.ReportsSilenceUnsupportedAndMalformedInput ....................   Passed    0.03 sec
+      Start 85: RadarProcessorTest.InterpolatesBetweenAdjacentFifteenDegreeSectors
+85/93 Test #85: RadarProcessorTest.InterpolatesBetweenAdjacentFifteenDegreeSectors ...............   Passed    0.03 sec
+      Start 86: RadarProcessorTest.PresetsAndCustomCurveAreSpectralEmphasis
+86/93 Test #86: RadarProcessorTest.PresetsAndCustomCurveAreSpectralEmphasis ......................   Passed    0.03 sec
+      Start 87: RadarProcessorTest.AppliesAttackReleaseAndBoundedHold
+87/93 Test #87: RadarProcessorTest.AppliesAttackReleaseAndBoundedHold ............................   Passed    0.03 sec
+      Start 88: RadarProcessorTest.ResetsOnGenerationLayoutAndTimelineDiscontinuity
+88/93 Test #88: RadarProcessorTest.ResetsOnGenerationLayoutAndTimelineDiscontinuity ..............   Passed    0.03 sec
+      Start 89: RadarProcessorTest.SelectsAtMostThreeSeparatedLocalPeaksWithinEighteenDb
+89/93 Test #89: RadarProcessorTest.SelectsAtMostThreeSeparatedLocalPeaksWithinEighteenDb .........   Passed    0.03 sec
+      Start 90: RadarProcessorTest.SeparatesRefinedPeakAzimuthsRatherThanSectorCenters
+90/93 Test #90: RadarProcessorTest.SeparatesRefinedPeakAzimuthsRatherThanSectorCenters ...........   Passed    0.03 sec
+      Start 91: RadarProcessorTest.EventWindowSeparatesDifferentFrequencies
+91/93 Test #91: RadarProcessorTest.EventWindowSeparatesDifferentFrequencies ......................   Passed    0.03 sec
+      Start 92: RadarProcessorTest.OpposingSameBandEnergyCancels
+92/93 Test #92: RadarProcessorTest.OpposingSameBandEnergyCancels .................................   Passed    0.03 sec
+      Start 93: RadarProcessorTest.SanitizesNonfiniteSamplesAndConfiguration
+93/93 Test #93: RadarProcessorTest.SanitizesNonfiniteSamplesAndConfiguration .....................   Passed    0.03 sec
+
+100% tests passed out of 93
+
+Total Test time (real) =   3.02 sec

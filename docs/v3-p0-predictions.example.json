@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "algorithm": "replace-with-frozen-algorithm-version",
+  "configuration_sha256": "replace-with-config-file-sha256",
+  "sessions": {
+    "replace-session-id": [
+      {
+        "class": "footstep",
+        "onset_ms": 1000,
+        "azimuth_deg": null,
+        "classification_confidence": 0.5,
+        "direction_confidence": 0,
+        "rejection_reason": "no_validated_spatial_evidence",
+        "hud_presented_ms": null
+      }
+    ]
+  }
+}
