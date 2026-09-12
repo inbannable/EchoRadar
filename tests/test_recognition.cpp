@@ -1,4 +1,5 @@
 #include <recognition/StereoOnsetFeatureExtractor.h>
+#include <recognition/RecognitionModelLocator.h>
 #include <recognition/RecognitionModelPackage.h>
 #include <recognition/RecognitionProbabilityModel.h>
 #include <recognition/SoundRecognizer.h>
@@ -369,4 +370,30 @@ TEST(SoundRecognizerContinuity, InvalidProbabilitiesCannotEmitEvents) {
     recognizer.OnAudio({pcm, 4096, 48000, 2, 4096, 1});
     EXPECT_EQ(model->callCount, 1u);
     EXPECT_EQ(delivered, 0u);
+}
+
+TEST(RecognitionModelLocator, FindsLegacyV4PackageWhenCurrentPackageIsAbsent) {
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() /
+        ("echoradar_model_locator_" +
+         std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    fs::remove_all(root);
+    const fs::path legacy = root / "models" / "v4-candidate";
+    fs::create_directories(legacy);
+    std::ofstream(legacy / "model.json") << "{}\n";
+
+    const fs::path executable =
+        root / "build" / "src" / "app" / "EchoRadarV2.exe";
+
+    const fs::path found = FindDefaultRecognitionModelDirectory(
+        executable, root);
+    EXPECT_EQ(found, fs::weakly_canonical(legacy));
+
+    const fs::path current =
+        root / "build" / "models" / "recognition-candidate";
+    fs::create_directories(current);
+    std::ofstream(current / "model.json") << "{}\n";
+    EXPECT_EQ(FindDefaultRecognitionModelDirectory(executable, root),
+              fs::weakly_canonical(current));
+    fs::remove_all(root);
 }

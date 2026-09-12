@@ -1,6 +1,7 @@
 #include "EchoRadarApp.h"
 
 #include <audio/AudioDeviceManager.h>
+#include <recognition/RecognitionModelLocator.h>
 
 #include <csignal>
 #include <filesystem>
@@ -39,40 +40,14 @@ std::filesystem::path ExecutablePath(const char* argumentZero) {
     return error ? std::filesystem::path(argumentZero) : absolute;
 }
 
-bool IsRecognitionPackage(const std::filesystem::path& directory) {
-    std::error_code error;
-    return std::filesystem::is_regular_file(
-        directory / "model.json", error);
-}
-
 std::filesystem::path ResolveDefaultModelDirectory(
     const char* argumentZero) {
-    const auto executableDirectory =
-        ExecutablePath(argumentZero).parent_path();
-    std::vector<std::filesystem::path> candidates{
-        executableDirectory / "models" / "recognition-candidate",
-    };
     std::error_code error;
     const auto workingDirectory =
         std::filesystem::current_path(error);
-    if (!error) {
-        candidates.push_back(
-            workingDirectory / "models" / "recognition-candidate");
-    }
-    for (auto ancestor = executableDirectory; !ancestor.empty();) {
-        candidates.push_back(
-            ancestor / "models" / "recognition-candidate");
-        const auto parent = ancestor.parent_path();
-        if (parent == ancestor) break;
-        ancestor = parent;
-    }
-    for (const auto& candidate : candidates) {
-        if (!IsRecognitionPackage(candidate)) continue;
-        const auto normalized =
-            std::filesystem::weakly_canonical(candidate, error);
-        return error ? candidate : normalized;
-    }
-    return {};
+    return EchoRadar::FindDefaultRecognitionModelDirectory(
+        ExecutablePath(argumentZero), error ? std::filesystem::path{}
+                                            : workingDirectory);
 }
 
 void PrintOutputs() {

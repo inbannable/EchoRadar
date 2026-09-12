@@ -79,6 +79,10 @@ Recognition is optional:
   --radar-preset footsteps
 ```
 
+When `--model` is omitted, EchoRadar looks for
+`models\recognition-candidate` and then the legacy-compatible
+`models\v4-candidate` package name.
+
 Use `--list-audio-outputs` to print native formats and ordered channel roles,
 `--audio-output-id <id>` to pin an endpoint, `--settings <json>` to override
 the v2 settings file, and `--no-overlay` for a headless run.

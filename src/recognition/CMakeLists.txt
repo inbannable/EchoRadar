@@ -3,6 +3,8 @@ add_library(echoradar_recognition STATIC
     RecognitionProbabilityModel.h
     RecognitionModelPackage.h
     RecognitionModelPackage.cpp
+    RecognitionModelLocator.h
+    RecognitionModelLocator.cpp
     RecognitionRuntimeConfig.h
     StereoOnsetFeatureExtractor.h
     StereoOnsetFeatureExtractor.cpp
